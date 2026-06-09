@@ -1,0 +1,23 @@
+{
+  "ticket_id": "TKT-SEO-003",
+  "check_name": "sitemap",
+  "categoria": "SEO",
+  "metodo": "WP-CLI",
+  "staging_url": "https://staging.cliente.com",
+  "timestamp": "2026-06-08T23:28:06.900556+00:00",
+  "status": "APPLIED",
+  "fix_payload": {
+    "command": "wp yoast sitemap generate",
+    "php_snippet": null,
+    "file_target": null
+  },
+  "rollback_payload": {
+    "command": "wp yoast sitemap delete",
+    "php_snippet": null,
+    "file_target": null
+  },
+  "riesgo": "Baja",
+  "requires_approval": true,
+  "approved_by": "rcaceres",
+  "error": null
+}

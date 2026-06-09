@@ -1,0 +1,8 @@
+Convertir estos 3 documentos en una metodología comercial reusable para auditorías y reparación de sitios WordPress/WooCommerce.
+Incluir:
+- nombre del servicio
+- fases
+- entregables
+- duración estimada
+- valor para el cliente
+- paquetes posibles

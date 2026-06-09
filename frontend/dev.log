@@ -1,0 +1,36 @@
+
+> wprecover-frontend@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.28
+  - Local:        http://localhost:3000
+
+ ✓ Starting...
+ ✓ Ready in 3.5s
+ ○ Compiling / ...
+ ✓ Compiled / in 9.3s (566 modules)
+ ✓ Compiled in 923ms (281 modules)
+ GET / 307 in 86ms
+ ○ Compiling /dashboard ...
+ ✓ Compiled /dashboard in 1297ms (558 modules)
+ GET /dashboard 200 in 1616ms
+ GET / 307 in 203ms
+ GET /dashboard 200 in 170ms
+ GET / 307 in 88ms
+ GET /dashboard 200 in 52ms
+ GET /dashboard 200 in 85ms
+ ○ Compiling /tickets ...
+ ✓ Compiled /tickets in 901ms (566 modules)
+ ○ Compiling /qa ...
+ ✓ Compiled /qa in 788ms (574 modules)
+ ✓ Compiled / in 226ms (294 modules)
+ GET / 307 in 486ms
+ GET /dashboard 200 in 86ms
+ ✓ Compiled in 2.1s (582 modules)
+ ✓ Compiled in 668ms (302 modules)
+ ✓ Compiled in 1747ms (582 modules)
+ ✓ Compiled in 1955ms (582 modules)
+ ✓ Compiled in 1134ms (582 modules)
+ ○ Compiling /tickets ...
+ ✓ Compiled /tickets in 973ms (286 modules)
+ GET /dashboard 200 in 247ms

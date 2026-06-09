@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from models import AgentResponse, SiteContext, Ticket
+
+AGENTS_DIR = Path(__file__).parent / "agents"
+_HISTORY_DIR = AGENTS_DIR / "history"
+
+_MODEL = "claude-sonnet-4-6"
+
+# ---------------------------------------------------------------------------
+# JSON response schema injected into every system prompt
+# ---------------------------------------------------------------------------
+
+_JSON_SCHEMA = """\
+Responde ÚNICAMENTE con este JSON (sin texto adicional, sin bloques markdown):
+{
+  "recomendaciones": ["paso 1...", "paso 2...", "paso 3..."],
+  "fix_sugerido": "comando WP-CLI o snippet PHP exacto, o null si no aplica",
+  "mensaje_cliente": "explicación no técnica en español (2–3 oraciones)",
+  "prioridad": "Critica|Alta|Media|Baja",
+  "estimacion_impacto": "impacto esperado cuantificable"
+}"""
+
+_SEO_SYSTEM = f"""Eres SEOAgent, especialista en SEO técnico para WordPress dentro de WPRecover 2.0.
+Analiza tickets de SEO fallidos y genera recomendaciones precisas y accionables.
+
+EXPERIENCIA: meta tags, canonicals, sitemaps XML, robots.txt, Schema.org, indexación,
+Yoast/Rank Math, Core Web Vitals, Google Search Console, penalizaciones algorítmicas.
+
+{_JSON_SCHEMA}"""
+
+_PERF_SYSTEM = f"""Eres PerfAgent, especialista en rendimiento web y Core Web Vitals para WordPress dentro de WPRecover 2.0.
+Analiza tickets de Performance y genera fixes específicos para mejorar LCP, CLS, INP y PageSpeed.
+
+EXPERIENCIA: LCP, CLS, INP, FCP, TTFB, WebP, lazy loading, caché (Redis, Cloudflare, CDN),
+GZIP/Brotli, minificación CSS/JS, render-blocking, PHP-FPM, OPcache, hosting.
+
+{_JSON_SCHEMA}"""
+
+_CRO_SYSTEM = f"""Eres CROAgent, especialista en Conversión y UX para sitios WordPress dentro de WPRecover 2.0.
+Analiza tickets de Conversión y genera fixes que maximicen leads, llamadas y ventas.
+
+EXPERIENCIA: CTAs, formularios, botones click-to-call, WhatsApp, heat maps,
+funnel de ventas, UX mobile, velocidad percibida, social proof, urgencia/escasez.
+
+{_JSON_SCHEMA}"""
+
+_SEC_SYSTEM = f"""Eres SecAgent, especialista en seguridad WordPress dentro de WPRecover 2.0.
+Analiza tickets de Seguridad y genera fixes que protejan el sitio sin interrumpir el servicio.
+
+EXPERIENCIA: SSL/TLS, headers HTTP de seguridad (CSP, HSTS, X-Frame-Options),
+WordPress hardening, permisos de archivos, WP-CLI security, malware, spam, backups.
+
+{_JSON_SCHEMA}"""
+
+_WOO_SYSTEM = f"""Eres WooAgent, especialista en WooCommerce dentro de WPRecover 2.0.
+Analiza tickets de WooCommerce y genera fixes que recuperen ventas y mejoren el checkout.
+
+EXPERIENCIA: checkout flow, pasarelas de pago (Stripe, PayPal, MercadoPago),
+productos sin imagen, inventario, emails transaccionales, cupones, envíos,
+SSL en checkout, abandono de carrito, mobile checkout.
+
+{_JSON_SCHEMA}"""
+
+_REPORT_SYSTEM = f"""Eres ReportAgent, especialista en redacción de informes ejecutivos dentro de WPRecover 2.0.
+Genera resúmenes claros y accionables para directivos no técnicos.
+
+EXPERIENCIA: redacción ejecutiva, KPIs digitales, ROI de correcciones web,
+presentación de resultados antes/después, narrativa de recuperación de sitios.
+
+{_JSON_SCHEMA}"""
+
+_OUTREACH_SYSTEM = f"""Eres OutreachAgent, especialista en prospección de clientes para WPRecover 2.0.
+Genera mensajes personalizados de outreach basados en los problemas detectados en el sitio.
+
+EXPERIENCIA: copywriting de ventas, propuesta de valor técnica en lenguaje de negocio,
+emails fríos, mensajes LinkedIn/WhatsApp, urgencia sin presión, beneficios cuantificables.
+
+{_JSON_SCHEMA}"""
+
+
+# ---------------------------------------------------------------------------
+# AgentBase
+# ---------------------------------------------------------------------------
+
+class AgentBase:
+    NOMBRE: str = "BaseAgent"
+    SCOPE: str = "General"
+    SYSTEM_PROMPT: str = ""
+    MODEL: str = _MODEL
+    MAX_TOKENS: int = 2048
+
+    def run(
+        self,
+        ticket: Ticket,
+        site_context: SiteContext,
+        historial: List[Dict[str, Any]],
+    ) -> AgentResponse:
+        try:
+            import anthropic as _anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic package not installed. Run: pip install 'anthropic>=0.40.0'"
+            ) from exc
+
+        client = _anthropic.Anthropic()
+        user_msg = self._build_user_message(ticket, site_context)
+        messages: List[Dict[str, Any]] = list(historial) + [
+            {"role": "user", "content": user_msg}
+        ]
+
+        response = client.messages.create(
+            model=self.MODEL,
+            max_tokens=self.MAX_TOKENS,
+            system=self.SYSTEM_PROMPT,
+            messages=messages,
+        )
+
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        parsed = self._parse_json(text)
+
+        return AgentResponse(
+            agent=self.NOMBRE,
+            scope=self.SCOPE,
+            ticket_id=ticket.id,
+            recomendaciones=parsed.get("recomendaciones", [text] if text else []),
+            fix_sugerido=parsed.get("fix_sugerido"),
+            mensaje_cliente=parsed.get("mensaje_cliente", ""),
+            prioridad=parsed.get("prioridad", str(ticket.prioridad)),
+            estimacion_impacto=parsed.get("estimacion_impacto", ""),
+            tokens_used=tokens,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+    @staticmethod
+    def _build_user_message(ticket: Ticket, context: SiteContext) -> str:
+        return (
+            f"TICKET:\n"
+            f"ID: {ticket.id}\n"
+            f"Categoría: {ticket.categoria}\n"
+            f"Título: {ticket.titulo}\n"
+            f"Prioridad: {ticket.prioridad}\n"
+            f"Impacto: {ticket.impacto}\n"
+            f"Estimación: {ticket.estimacion} min\n"
+            f"Estado: {ticket.estado}\n\n"
+            f"CONTEXTO DEL SITIO:\n"
+            f"URL: {context.url}\n"
+            f"Plataforma: {context.platform}\n"
+            f"Recovery Score: {context.recovery_score if context.recovery_score is not None else 'N/A'}\n"
+            f"PageSpeed: {context.pagespeed_score if context.pagespeed_score is not None else 'N/A'}\n"
+            f"Sector: {context.sector or 'General'}\n"
+            f"Notas: {context.notas or 'Ninguna'}\n"
+        )
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        # Strip markdown code fences (```json ... ``` or ``` ... ```)
+        clean = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
+        clean = re.sub(r"\s*```$", "", clean.strip())
+        try:
+            return json.loads(clean)
+        except Exception:
+            pass
+        match = re.search(r"\{[\s\S]*\}", clean)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception:
+                pass
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Specialized agents — each overrides only NOMBRE, SCOPE, SYSTEM_PROMPT
+# ---------------------------------------------------------------------------
+
+class SEOAgent(AgentBase):
+    NOMBRE = "SEOAgent"
+    SCOPE = "SEO"
+    SYSTEM_PROMPT = _SEO_SYSTEM
+
+
+class PerfAgent(AgentBase):
+    NOMBRE = "PerfAgent"
+    SCOPE = "Performance"
+    SYSTEM_PROMPT = _PERF_SYSTEM
+
+
+class CROAgent(AgentBase):
+    NOMBRE = "CROAgent"
+    SCOPE = "Conversion"
+    SYSTEM_PROMPT = _CRO_SYSTEM
+
+
+class SecAgent(AgentBase):
+    NOMBRE = "SecAgent"
+    SCOPE = "Seguridad"
+    SYSTEM_PROMPT = _SEC_SYSTEM
+
+
+class WooAgent(AgentBase):
+    NOMBRE = "WooAgent"
+    SCOPE = "WooCommerce"
+    SYSTEM_PROMPT = _WOO_SYSTEM
+
+
+class ReportAgent(AgentBase):
+    NOMBRE = "ReportAgent"
+    SCOPE = "Reportes"
+    SYSTEM_PROMPT = _REPORT_SYSTEM
+
+
+class OutreachAgent(AgentBase):
+    NOMBRE = "OutreachAgent"
+    SCOPE = "Prospección"
+    SYSTEM_PROMPT = _OUTREACH_SYSTEM
+
+
+# ---------------------------------------------------------------------------
+# Scope → agent registry (singletons)
+# ---------------------------------------------------------------------------
+
+SCOPE_TO_AGENT: Dict[str, AgentBase] = {
+    "SEO": SEOAgent(),
+    "Performance": PerfAgent(),
+    "Conversion": CROAgent(),
+    "Seguridad": SecAgent(),
+    "WooCommerce": WooAgent(),
+    "Reportes": ReportAgent(),
+    "Prospección": OutreachAgent(),
+}
+
+
+# ---------------------------------------------------------------------------
+# AgentHistoryStore — append-only JSONL per ticket
+# ---------------------------------------------------------------------------
+
+class AgentHistoryStore:
+    @staticmethod
+    def _path(ticket_id: str) -> Path:
+        _HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        return _HISTORY_DIR / f"{ticket_id}.jsonl"
+
+    @classmethod
+    def append(cls, response: AgentResponse) -> None:
+        path = cls._path(response.ticket_id)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(response.model_dump_json() + "\n")
+
+    @classmethod
+    def load(cls, ticket_id: str) -> List[AgentResponse]:
+        path = cls._path(ticket_id)
+        if not path.exists():
+            return []
+        entries: List[AgentResponse] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(AgentResponse(**json.loads(line)))
+                except Exception:
+                    pass
+        return entries
+
+    @classmethod
+    def list_all(cls) -> List[Dict[str, Any]]:
+        if not _HISTORY_DIR.exists():
+            return []
+        result = []
+        for f in sorted(_HISTORY_DIR.glob("*.jsonl"), reverse=True):
+            entries = cls.load(f.stem)
+            if entries:
+                last = entries[-1]
+                result.append({
+                    "ticket_id": last.ticket_id,
+                    "last_agent": last.agent,
+                    "last_scope": last.scope,
+                    "last_timestamp": last.timestamp,
+                    "total_interactions": len(entries),
+                })
+        return result
+
+
+# ---------------------------------------------------------------------------
+# AgentOrchestrator
+# ---------------------------------------------------------------------------
+
+class AgentOrchestrator:
+    @classmethod
+    def run_for_ticket(
+        cls,
+        ticket: Ticket,
+        site_context: SiteContext,
+        historial: Optional[List[Dict[str, Any]]] = None,
+    ) -> AgentResponse:
+        agent = SCOPE_TO_AGENT.get(str(ticket.categoria).split(".")[-1])
+        if not agent:
+            raise ValueError(
+                f"No agent configured for category '{ticket.categoria}'. "
+                f"Available scopes: {list(SCOPE_TO_AGENT.keys())}"
+            )
+        response = agent.run(ticket, site_context, historial or [])
+        AgentHistoryStore.append(response)
+        return response
+
+    @classmethod
+    def batch(
+        cls,
+        tickets: List[Ticket],
+        site_context: SiteContext,
+        historial: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[AgentResponse]:
+        responses: List[AgentResponse] = []
+        for ticket in tickets:
+            try:
+                responses.append(cls.run_for_ticket(ticket, site_context, historial))
+            except Exception as exc:
+                responses.append(
+                    AgentResponse(
+                        agent="ErrorAgent",
+                        scope=str(ticket.categoria),
+                        ticket_id=ticket.id,
+                        recomendaciones=[f"Error procesando ticket: {exc}"],
+                        fix_sugerido=None,
+                        mensaje_cliente="No se pudo procesar este ticket automáticamente.",
+                        prioridad=str(ticket.prioridad),
+                        estimacion_impacto="N/A",
+                        tokens_used=0,
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+        return responses

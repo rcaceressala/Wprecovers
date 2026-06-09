@@ -1,0 +1,424 @@
+{
+  "proyecto": "WPRecover 2.0",
+  "recovery_score_formula": {
+    "SEO": 0.3,
+    "Performance": 0.2,
+    "Conversion": 0.2,
+    "Seguridad": 0.15,
+    "WooCommerce": 0.15
+  },
+  "modulos": [
+    {
+      "id": "M1",
+      "modulo": "Auditor Técnico",
+      "prioridad": 1,
+      "estado": "90% completo (v8)",
+      "tarea": "Escanear WordPress y detectar problemas técnicos",
+      "inputs": [
+        "URL",
+        "API PageSpeed",
+        "HTML raw",
+        "robots.txt",
+        "sitemap.xml"
+      ],
+      "outputs": [
+        "checks[]",
+        "recovery_score",
+        "errores[]",
+        "advertencias[]"
+      ],
+      "dependencias": [],
+      "checks": {
+        "SEO": [
+          "title",
+          "meta_desc",
+          "canonical",
+          "og_image",
+          "schema",
+          "sitemap",
+          "robots",
+          "h1",
+          "alt_imgs"
+        ],
+        "Performance": [
+          "LCP",
+          "CLS",
+          "INP",
+          "cache",
+          "gzip",
+          "webp",
+          "lazy_load"
+        ],
+        "Conversion": [
+          "tel_clickeable",
+          "whatsapp",
+          "formularios",
+          "CTA",
+          "tracking"
+        ],
+        "Seguridad": [
+          "wp_version",
+          "plugins_desact",
+          "meta_generator",
+          "headers",
+          "ssl"
+        ],
+        "WooCommerce": [
+          "productos_sin_cat",
+          "productos_sin_img",
+          "slugs_dup",
+          "precios",
+          "pasarelas"
+        ]
+      }
+    },
+    {
+      "id": "M2",
+      "modulo": "Motor de Tickets",
+      "prioridad": 2,
+      "estado": "pendiente",
+      "tarea": "Transformar checks fallidos en tickets accionables priorizados",
+      "inputs": [
+        "checks[]",
+        "errores[]",
+        "recovery_score"
+      ],
+      "outputs": [
+        "tickets[]",
+        "prioridad",
+        "agente_asignado",
+        "estimacion_min"
+      ],
+      "dependencias": [
+        "M1"
+      ],
+      "ticket_schema": {
+        "id": "string",
+        "categoria": "SEO|Performance|Conversion|Seguridad|WooCommerce",
+        "titulo": "string",
+        "prioridad": "Critica|Alta|Media|Baja",
+        "impacto": "string",
+        "agente": "string",
+        "estimacion": "number",
+        "dependencias": "string[]",
+        "estado": "OPEN|IN_PROGRESS|DONE|FAIL"
+      },
+      "reglas_prioridad": {
+        "Critica": [
+          "sitio_caido",
+          "error_500",
+          "checkout_roto"
+        ],
+        "Alta": [
+          "indexacion",
+          "conversiones",
+          "seguridad"
+        ],
+        "Media": [
+          "performance"
+        ],
+        "Baja": [
+          "cosmético"
+        ]
+      }
+    },
+    {
+      "id": "M3",
+      "modulo": "QA Automático",
+      "prioridad": 3,
+      "estado": "pendiente",
+      "tarea": "Validar fixes aplicados contra baseline",
+      "inputs": [
+        "ticket_id",
+        "baseline_snapshot",
+        "fix_aplicado"
+      ],
+      "outputs": [
+        "qa_result: PASS|FAIL",
+        "evidencia",
+        "diff_métricas"
+      ],
+      "dependencias": [
+        "M1",
+        "M2"
+      ],
+      "flujo": [
+        "baseline",
+        "apply_fix",
+        "validate",
+        "log",
+        "evidence"
+      ],
+      "qa_schema": {
+        "ticket_id": "string",
+        "baseline": "object",
+        "fix": "object",
+        "validacion": "object",
+        "resultado": "PASS|FAIL"
+      }
+    },
+    {
+      "id": "M4",
+      "modulo": "Motor de Correcciones",
+      "prioridad": 4,
+      "estado": "pendiente",
+      "tarea": "Aplicar fixes seguros con rollback automático",
+      "inputs": [
+        "ticket_id",
+        "metodo",
+        "staging_url"
+      ],
+      "outputs": [
+        "fix_aplicado",
+        "rollback_disponible",
+        "log"
+      ],
+      "dependencias": [
+        "M2",
+        "M3"
+      ],
+      "metodos": [
+        "WP-CLI",
+        "functions.php",
+        "plugin_wprecover"
+      ],
+      "fixes_permitidos": {
+        "SEO": [
+          "meta_generator",
+          "sitemap",
+          "robots",
+          "canonicals"
+        ],
+        "Conversion": [
+          "tel_clickeable",
+          "CTA",
+          "whatsapp"
+        ],
+        "Contenido": [
+          "links_rotos",
+          "301_redirects"
+        ]
+      },
+      "restricciones": [
+        "staging_obligatorio",
+        "aprobacion_humana_criticos"
+      ]
+    },
+    {
+      "id": "M5",
+      "modulo": "Reportes Ejecutivos",
+      "prioridad": 3,
+      "estado": "parcial (PDF v8)",
+      "tarea": "Generar reporte DONE con KPIs antes/después",
+      "inputs": [
+        "tickets_completados",
+        "qa_results[]",
+        "metricas_baseline",
+        "metricas_final"
+      ],
+      "outputs": [
+        "pdf_reporte",
+        "recovery_score_delta",
+        "tiempo_invertido"
+      ],
+      "dependencias": [
+        "M1",
+        "M2",
+        "M3"
+      ],
+      "secciones": {
+        "SEO": [
+          "score_inicial",
+          "score_final"
+        ],
+        "Performance": [
+          "LCP",
+          "CLS",
+          "INP"
+        ],
+        "Conversion": [
+          "CTR",
+          "leads"
+        ],
+        "Seguridad": [
+          "vulnerabilidades_corregidas"
+        ]
+      }
+    },
+    {
+      "id": "M6",
+      "modulo": "Agentes IA",
+      "prioridad": 5,
+      "estado": "parcial (batch v8)",
+      "tarea": "Orquestar agentes especializados por dominio",
+      "inputs": [
+        "tickets[]",
+        "contexto_sitio",
+        "historial"
+      ],
+      "outputs": [
+        "recomendaciones",
+        "fix_sugerido",
+        "mensaje_cliente"
+      ],
+      "dependencias": [
+        "M1",
+        "M2",
+        "M3",
+        "M4"
+      ],
+      "agentes": [
+        {
+          "nombre": "SEOAgent",
+          "scope": "SEO"
+        },
+        {
+          "nombre": "PerfAgent",
+          "scope": "Performance"
+        },
+        {
+          "nombre": "CROAgent",
+          "scope": "Conversion"
+        },
+        {
+          "nombre": "SecAgent",
+          "scope": "Seguridad"
+        },
+        {
+          "nombre": "WooAgent",
+          "scope": "WooCommerce"
+        },
+        {
+          "nombre": "ReportAgent",
+          "scope": "Reportes"
+        },
+        {
+          "nombre": "OutreachAgent",
+          "scope": "Prospección"
+        }
+      ],
+      "modelo": "claude-sonnet-4-20250514"
+    },
+    {
+      "id": "M7",
+      "modulo": "Prospector Maps",
+      "prioridad": 2,
+      "estado": "completo (v8)",
+      "tarea": "Encontrar negocios sin web en Google Maps",
+      "inputs": [
+        "google_places_key",
+        "tipo_negocio",
+        "ciudad",
+        "max_resultados"
+      ],
+      "outputs": [
+        "negocios[]",
+        "sin_web[]",
+        "exportar_batch"
+      ],
+      "dependencias": [],
+      "campos_negocio": [
+        "nombre",
+        "direccion",
+        "telefono",
+        "whatsapp",
+        "web",
+        "rating",
+        "reviews",
+        "categoria"
+      ]
+    },
+    {
+      "id": "M8",
+      "modulo": "SaaS & Billing",
+      "prioridad": 5,
+      "estado": "pendiente",
+      "tarea": "Gestionar planes, usuarios y facturación",
+      "inputs": [
+        "usuario",
+        "plan",
+        "uso_mensual"
+      ],
+      "outputs": [
+        "acceso_features",
+        "factura",
+        "limite_auditorias"
+      ],
+      "dependencias": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5"
+      ],
+      "planes": {
+        "Starter": [
+          "auditoria_basica",
+          "recovery_score"
+        ],
+        "Growth": [
+          "auditoria",
+          "tickets"
+        ],
+        "Scale": [
+          "qa_automatico",
+          "reportes"
+        ],
+        "Elite": [
+          "multiagentes",
+          "monitoreo_continuo"
+        ]
+      },
+      "stack": {
+        "frontend": [
+          "Next.js",
+          "TypeScript",
+          "TailwindCSS"
+        ],
+        "backend": [
+          "Python",
+          "FastAPI"
+        ],
+        "db": "PostgreSQL",
+        "cache": "Redis",
+        "infra": [
+          "Docker",
+          "Cloudflare",
+          "VPS Linux"
+        ]
+      }
+    }
+  ],
+  "roadmap": [
+    {
+      "fase": 1,
+      "modulo": "M1",
+      "entregable": "Scanner completo + Recovery Score",
+      "estado": "✅ 90%"
+    },
+    {
+      "fase": 2,
+      "modulo": "M2",
+      "entregable": "Motor de tickets JSON + dashboard",
+      "estado": "🔶 próximo"
+    },
+    {
+      "fase": 3,
+      "modulo": "M3",
+      "entregable": "QA baselines + evidencias",
+      "estado": "❌ pendiente"
+    },
+    {
+      "fase": 4,
+      "modulo": "M4",
+      "entregable": "Fixes seguros + rollback",
+      "estado": "❌ pendiente"
+    },
+    {
+      "fase": 5,
+      "modulo": "M6",
+      "entregable": "Multiagentes IA especializados",
+      "estado": "🔶 parcial"
+    }
+  ]
+}

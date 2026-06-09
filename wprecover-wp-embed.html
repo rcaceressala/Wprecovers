@@ -1,0 +1,858 @@
+<style>
+
+:root {
+  --bg: #070709;
+  --surface: #0f0f14;
+  --surface2: #17171f;
+  --border: rgba(255,255,255,0.06);
+  --border2: rgba(255,255,255,0.12);
+  --text: #eeecea;
+  --muted: #7a7884;
+  --accent: #3d6fff;
+  --accent2: #5b84ff;
+  --green: #1fd07a;
+  --amber: #f0a030;
+  --red: #ff4545;
+  --radius: 10px;
+  --radius-lg: 16px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* NAV */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 5%;
+  height: 64px;
+  background: rgba(7,7,9,0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.nav-logo {
+  font-family: 'Syne', sans-serif;
+  font-size: 18px; font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.03em;
+  text-decoration: none;
+}
+.nav-logo span { color: var(--accent2); }
+.nav-links { display: flex; gap: 28px; align-items: center; }
+.nav-links a {
+  color: var(--muted); font-size: 13px; text-decoration: none;
+  transition: color 0.15s; font-weight: 400;
+}
+.nav-links a:hover { color: var(--text); }
+.nav-cta {
+  background: var(--accent);
+  color: #fff !important;
+  padding: 8px 18px;
+  border-radius: 100px;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  transition: opacity 0.15s !important;
+}
+.nav-cta:hover { opacity: 0.88; }
+
+/* HERO */
+.hero {
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center;
+  padding: 100px 5% 80px;
+  position: relative;
+  overflow: hidden;
+}
+.hero-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(61,111,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(61,111,255,0.04) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 100%);
+}
+.hero-glow {
+  position: absolute; top: 20%; left: 50%;
+  transform: translateX(-50%);
+  width: 600px; height: 300px;
+  background: radial-gradient(ellipse, rgba(61,111,255,0.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(61,111,255,0.1);
+  border: 1px solid rgba(61,111,255,0.25);
+  border-radius: 100px;
+  padding: 6px 16px;
+  font-size: 12px; color: var(--accent2);
+  margin-bottom: 28px;
+  animation: fadeUp 0.6s ease both;
+}
+.badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.hero h1 {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(36px, 6vw, 72px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  max-width: 860px;
+  margin-bottom: 24px;
+  animation: fadeUp 0.6s 0.1s ease both;
+}
+.hero h1 em { font-style: normal; color: var(--accent2); }
+.hero h1 .line2 { color: var(--muted); font-weight: 600; }
+
+.hero-sub {
+  font-size: clamp(15px, 2vw, 18px);
+  color: var(--muted);
+  max-width: 560px;
+  margin-bottom: 40px;
+  font-weight: 300;
+  line-height: 1.7;
+  animation: fadeUp 0.6s 0.2s ease both;
+}
+
+.hero-actions {
+  display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+  animation: fadeUp 0.6s 0.3s ease both;
+}
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--accent);
+  color: #fff; font-size: 14px; font-weight: 500;
+  padding: 13px 28px; border-radius: 100px;
+  text-decoration: none;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+.btn-secondary {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: transparent;
+  border: 1px solid var(--border2);
+  color: var(--text); font-size: 14px; font-weight: 400;
+  padding: 13px 28px; border-radius: 100px;
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.btn-secondary:hover { border-color: var(--accent); background: rgba(61,111,255,0.06); }
+
+/* STATS BAR */
+.stats-bar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 32px 5%;
+  display: flex; align-items: center; justify-content: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+.stat-item {
+  text-align: center;
+  padding: 12px 48px;
+  border-right: 1px solid var(--border);
+}
+.stat-item:last-child { border-right: none; }
+.stat-num {
+  font-family: 'Syne', sans-serif;
+  font-size: 36px; font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.stat-num span { color: var(--accent2); }
+.stat-label { font-size: 12px; color: var(--muted); font-weight: 300; }
+
+/* CASE */
+.case-banner {
+  margin: 0 5%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px 36px;
+  display: flex; align-items: center; gap: 32px;
+  flex-wrap: wrap;
+}
+.case-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--muted); margin-bottom: 6px;
+}
+.case-name {
+  font-family: 'Syne', sans-serif;
+  font-size: 20px; font-weight: 700;
+  color: var(--text); margin-bottom: 4px;
+}
+.case-desc { font-size: 13px; color: var(--muted); font-weight: 300; }
+.case-metrics { display: flex; gap: 24px; flex-wrap: wrap; margin-left: auto; }
+.case-metric { text-align: center; }
+.case-metric-num {
+  font-family: 'Syne', sans-serif;
+  font-size: 26px; font-weight: 800;
+  letter-spacing: -0.02em; line-height: 1;
+}
+.case-metric-lbl { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.cm-green { color: var(--green); }
+.cm-blue { color: var(--accent2); }
+.cm-amber { color: var(--amber); }
+
+/* SECTIONS */
+section { padding: 96px 5%; }
+.section-tag {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--accent2); margin-bottom: 16px; font-weight: 500;
+}
+.section-title {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 800; letter-spacing: -0.03em;
+  line-height: 1.1; margin-bottom: 16px;
+  max-width: 640px;
+}
+.section-sub {
+  font-size: 16px; color: var(--muted);
+  max-width: 520px; line-height: 1.7;
+  font-weight: 300; margin-bottom: 56px;
+}
+
+/* HOW IT WORKS */
+.phases-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 2px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.phase-card {
+  background: var(--surface);
+  padding: 28px 24px;
+  transition: background 0.15s;
+}
+.phase-card:hover { background: var(--surface2); }
+.phase-num {
+  font-family: 'Syne', sans-serif;
+  font-size: 11px; font-weight: 700;
+  color: var(--accent2); letter-spacing: 0.1em;
+  text-transform: uppercase; margin-bottom: 12px;
+}
+.phase-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 16px; font-weight: 700;
+  color: var(--text); margin-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+.phase-duration {
+  font-size: 11px; color: var(--muted);
+  margin-bottom: 12px;
+}
+.phase-desc { font-size: 13px; color: var(--muted); line-height: 1.6; font-weight: 300; }
+
+/* PACKAGES */
+.packages-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.pkg-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px 24px;
+  display: flex; flex-direction: column;
+  transition: border-color 0.15s, transform 0.15s;
+  position: relative;
+}
+.pkg-card:hover { border-color: var(--border2); transform: translateY(-2px); }
+.pkg-card.featured {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(61,111,255,0.08) 0%, var(--surface) 60%);
+}
+.pkg-featured-badge {
+  position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; padding: 4px 14px; border-radius: 100px;
+  white-space: nowrap;
+}
+.pkg-name {
+  font-family: 'Syne', sans-serif;
+  font-size: 18px; font-weight: 800;
+  color: var(--text); margin-bottom: 4px;
+  letter-spacing: -0.02em;
+}
+.pkg-subtitle { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+.pkg-price {
+  font-family: 'Syne', sans-serif;
+  font-size: 32px; font-weight: 800;
+  color: var(--text); letter-spacing: -0.03em;
+  line-height: 1; margin-bottom: 4px;
+}
+.pkg-price span { font-size: 14px; font-weight: 400; color: var(--muted); }
+.pkg-duration { font-size: 12px; color: var(--muted); margin-bottom: 24px; }
+.pkg-divider { height: 1px; background: var(--border); margin-bottom: 20px; }
+.pkg-features { list-style: none; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+.pkg-features li {
+  display: flex; align-items: flex-start; gap: 10px;
+  font-size: 13px; color: var(--muted); line-height: 1.4; font-weight: 300;
+}
+.pkg-features li::before {
+  content: '✓'; color: var(--green);
+  font-size: 12px; font-weight: 700;
+  flex-shrink: 0; margin-top: 1px;
+}
+.pkg-btn {
+  display: block; text-align: center;
+  margin-top: 24px; padding: 11px;
+  border-radius: 100px;
+  font-size: 13px; font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.pkg-btn-outline {
+  border: 1px solid var(--border2);
+  color: var(--text);
+}
+.pkg-btn-outline:hover { border-color: var(--accent); color: var(--accent2); }
+.pkg-btn-filled {
+  background: var(--accent); color: #fff;
+}
+.pkg-btn-filled:hover { opacity: 0.88; }
+
+/* DIFFERENTIATORS */
+.diff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.diff-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  transition: border-color 0.15s;
+}
+.diff-card:hover { border-color: var(--border2); }
+.diff-icon {
+  width: 40px; height: 40px; border-radius: var(--radius);
+  background: rgba(61,111,255,0.1);
+  border: 1px solid rgba(61,111,255,0.2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; margin-bottom: 16px;
+}
+.diff-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 15px; font-weight: 700;
+  color: var(--text); margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+.diff-desc { font-size: 13px; color: var(--muted); line-height: 1.6; font-weight: 300; }
+
+/* GUARANTEES */
+.guarantees-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 2px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.guarantee-item {
+  background: var(--surface);
+  padding: 24px 20px;
+  text-align: center;
+}
+.guarantee-icon { font-size: 24px; margin-bottom: 10px; }
+.guarantee-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 13px; font-weight: 700;
+  color: var(--text); margin-bottom: 6px;
+}
+.guarantee-desc { font-size: 12px; color: var(--muted); line-height: 1.5; font-weight: 300; }
+
+/* CONTACT */
+.contact-wrap {
+  max-width: 640px; margin: 0 auto; text-align: center;
+}
+.contact-cards {
+  display: flex; gap: 12px; justify-content: center;
+  flex-wrap: wrap; margin-top: 40px;
+}
+.contact-card {
+  flex: 1; min-width: 220px; max-width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  text-decoration: none;
+  transition: border-color 0.15s, transform 0.15s;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.contact-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.contact-card-icon {
+  width: 48px; height: 48px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+}
+.cc-wa { background: rgba(37,211,102,0.12); }
+.cc-email { background: rgba(61,111,255,0.12); }
+.contact-card-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 14px; font-weight: 700; color: var(--text);
+}
+.contact-card-sub { font-size: 12px; color: var(--muted); }
+.contact-card-action {
+  font-size: 12px; font-weight: 500;
+  color: var(--accent2); margin-top: 4px;
+}
+
+/* FOOTER */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 32px 5%;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 16px;
+}
+.footer-logo {
+  font-family: 'Syne', sans-serif;
+  font-size: 16px; font-weight: 800;
+  color: var(--text); text-decoration: none;
+  letter-spacing: -0.02em;
+}
+.footer-logo span { color: var(--accent2); }
+.footer-copy { font-size: 12px; color: var(--muted); }
+.footer-links { display: flex; gap: 20px; }
+.footer-links a { font-size: 12px; color: var(--muted); text-decoration: none; }
+.footer-links a:hover { color: var(--text); }
+
+/* ANIMATIONS */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up {
+  opacity: 0; transform: translateY(24px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.fade-up.visible { opacity: 1; transform: translateY(0); }
+
+/* MOBILE */
+@media (max-width: 768px) {
+  .nav-links { display: none; }
+  .stat-item { padding: 12px 24px; border-right: none; border-bottom: 1px solid var(--border); }
+  .stat-item:last-child { border-bottom: none; }
+  .stats-bar { flex-direction: column; }
+  .case-banner { flex-direction: column; }
+  .case-metrics { margin-left: 0; }
+  section { padding: 64px 5%; }
+  .contact-card { min-width: 100%; }
+}
+
+/* STICKY WA BUTTON */
+.sticky-wa {
+  position: fixed; bottom: 24px; right: 24px; z-index: 200;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: #25d366;
+  display: flex; align-items: center; justify-content: center;
+  text-decoration: none;
+  box-shadow: 0 4px 20px rgba(37,211,102,0.35);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.sticky-wa:hover { transform: scale(1.08); box-shadow: 0 6px 28px rgba(37,211,102,0.45); }
+.sticky-wa svg { width: 28px; height: 28px; fill: #fff; }
+
+
+/* === WP OVERRIDE: forzar full width y ocultar elementos del tema === */
+#wpr-wrap {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 9999;
+  background: #070709;
+}
+/* Ocultar todo lo del tema WordPress debajo */
+body > *:not(#wpr-wrap):not(.sticky-wa) {
+  display: none !important;
+}
+body {
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+</style>
+
+<div id="wpr-wrap">
+
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="nav-logo">WP<span>Recover</span></a>
+  <div class="nav-links">
+    <a href="#como-funciona">Cómo funciona</a>
+    <a href="#paquetes">Paquetes</a>
+    <a href="#garantias">Garantías</a>
+    <a href="#contacto" class="nav-cta">Diagnóstico gratis</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow"></div>
+
+  <div class="hero-badge">
+    <div class="badge-dot"></div>
+    Especialistas WordPress + WooCommerce · LATAM
+  </div>
+
+  <h1>
+    Tu sitio WordPress<br>
+    <em>reparado y optimizado</em><br>
+    <span class="line2">con evidencia técnica.</span>
+  </h1>
+
+  <p class="hero-sub">
+    Diagnosticamos, reparamos y optimizamos sitios WordPress y WooCommerce.
+    Cada fix entregado con baseline antes, resultado después y QA pass documentado.
+    Sin QA pass, no se cobra.
+  </p>
+
+  <div class="hero-actions">
+    <a href="https://wa.me/56962595783?text=Hola%2C%20quiero%20un%20diagn%C3%B3stico%20gratuito%20de%20mi%20sitio%20WordPress" target="_blank" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+      Diagnóstico gratuito
+    </a>
+    <a href="#paquetes" class="btn-secondary">
+      Ver paquetes →
+    </a>
+  </div>
+</section>
+
+<!-- STATS BAR -->
+<div class="stats-bar">
+  <div class="stat-item">
+    <div class="stat-num">147 <span>→ 0</span></div>
+    <div class="stat-label">Errores 404 eliminados</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num">16 <span>→ 43+</span></div>
+    <div class="stat-label">URLs indexadas en Google</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num">+<span>22%</span></div>
+    <div class="stat-label">Conversión mobile estimada</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num"><span>0</span></div>
+    <div class="stat-label">Regresiones en 3 sprints</div>
+  </div>
+</div>
+
+<!-- CASE STUDY -->
+<section style="padding: 48px 5%;">
+  <div class="case-banner fade-up">
+    <div>
+      <div class="case-label">Caso de referencia · Mayo 2026</div>
+      <div class="case-name">GlobalKlima.cl</div>
+      <div class="case-desc">Tienda WooCommerce · Climatización · Santiago, Chile</div>
+    </div>
+    <div class="case-metrics">
+      <div class="case-metric">
+        <div class="case-metric-num cm-green">147→0</div>
+        <div class="case-metric-lbl">Errores 404</div>
+      </div>
+      <div class="case-metric">
+        <div class="case-metric-num cm-blue">43+</div>
+        <div class="case-metric-lbl">URLs indexadas</div>
+      </div>
+      <div class="case-metric">
+        <div class="case-metric-num cm-amber">+22%</div>
+        <div class="case-metric-lbl">Conversión mobile</div>
+      </div>
+      <div class="case-metric">
+        <div class="case-metric-num" style="color:var(--green);">0</div>
+        <div class="case-metric-lbl">Regresiones</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="como-funciona">
+  <div class="section-tag">Metodología</div>
+  <h2 class="section-title fade-up">Cinco fases. Evidencia técnica en cada entrega.</h2>
+  <p class="section-sub fade-up">No comprás horas de trabajo — comprás resultados medibles. Cada ticket tiene baseline antes del fix, resultado después y QA pass documentado.</p>
+
+  <div class="phases-grid fade-up">
+    <div class="phase-card">
+      <div class="phase-num">Fase 01</div>
+      <div class="phase-title">Discovery & Auditoría</div>
+      <div class="phase-duration">3–5 días hábiles</div>
+      <div class="phase-desc">Análisis completo sin tocar nada. SEO técnico, WooCommerce, conversión mobile y performance. Backlog priorizado con impacto estimado por problema.</div>
+    </div>
+    <div class="phase-card">
+      <div class="phase-num">Fase 02</div>
+      <div class="phase-title">Sprint 0 — Quick Wins</div>
+      <div class="phase-duration">3–5 días hábiles</div>
+      <div class="phase-desc">5–8 fixes de alto impacto y bajo riesgo: links rotos, teléfono clickeable, precios inconsistentes, versión CMS expuesta. Mejoras visibles en menos de una semana.</div>
+    </div>
+    <div class="phase-card">
+      <div class="phase-num">Fase 03</div>
+      <div class="phase-title">Arquitectura SEO + WooCommerce</div>
+      <div class="phase-duration">7–10 días hábiles</div>
+      <div class="phase-desc">Taxonomías, slugs, Schema markup, og:image, title tags optimizadas. Validado con Rich Results Test y Google Search Console.</div>
+    </div>
+    <div class="phase-card">
+      <div class="phase-num">Fase 04</div>
+      <div class="phase-title">Conversión + SEO Local</div>
+      <div class="phase-duration">7–10 días hábiles</div>
+      <div class="phase-desc">WhatsApp en páginas de producto, jerarquía CTAs, enlazado interno, Google Business Profile, FAQPage Schema para búsquedas locales.</div>
+    </div>
+    <div class="phase-card">
+      <div class="phase-num">Fase 05</div>
+      <div class="phase-title">Performance + Autoridad</div>
+      <div class="phase-duration">7–10 días hábiles</div>
+      <div class="phase-desc">Core Web Vitals LCP &lt;2.5s, WebP masivo, AggregateRating con reseñas verificadas, manual de mantenimiento mensual y reporte final KPIs.</div>
+    </div>
+  </div>
+</section>
+
+<!-- PACKAGES -->
+<section id="paquetes" style="background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+  <div class="section-tag">Paquetes</div>
+  <h2 class="section-title fade-up">Empieza donde necesitas. Escala cuando quieras.</h2>
+  <p class="section-sub fade-up">Cuatro paquetes en capas. El trabajo del paquete anterior no se rehace — cada sprint construye sobre el anterior.</p>
+
+  <div class="packages-grid">
+
+    <div class="pkg-card fade-up">
+      <div class="pkg-name">Starter</div>
+      <div class="pkg-subtitle">Diagnóstico + Quick Wins</div>
+      <div class="pkg-price">USD 490 <span>desde</span></div>
+      <div class="pkg-duration">~2 semanas · Fases 1 y 2</div>
+      <div class="pkg-divider"></div>
+      <ul class="pkg-features">
+        <li>Auditoría técnica completa (SEO, WooCommerce, conversión, seguridad)</li>
+        <li>Informe con backlog priorizado + registro de riesgos</li>
+        <li>Baseline de KPIs documentado</li>
+        <li>Sprint 0: 5–8 quick wins con QA pass</li>
+        <li>DONE report con evidencia técnica por ticket</li>
+        <li>1 sesión de presentación de resultados (45 min)</li>
+      </ul>
+      <a href="https://wa.me/56962595783?text=Quiero%20el%20paquete%20Starter%20de%20WP%20Recover" target="_blank" class="pkg-btn pkg-btn-outline">Consultar →</a>
+    </div>
+
+    <div class="pkg-card fade-up">
+      <div class="pkg-name">Growth</div>
+      <div class="pkg-subtitle">Starter + Arquitectura SEO</div>
+      <div class="pkg-price">USD 990 <span>desde</span></div>
+      <div class="pkg-duration">~5 semanas · Fases 1–3</div>
+      <div class="pkg-divider"></div>
+      <ul class="pkg-features">
+        <li>Todo lo del paquete Starter</li>
+        <li>Arquitectura WooCommerce + Schema markup</li>
+        <li>og:image única + title tags optimizadas</li>
+        <li>Schema LocalBusiness + Product (0 errores Rich Results)</li>
+        <li>Submit selectivo a Google Search Console</li>
+        <li>2 sesiones de seguimiento durante el proceso</li>
+      </ul>
+      <a href="https://wa.me/56962595783?text=Quiero%20el%20paquete%20Growth%20de%20WP%20Recover" target="_blank" class="pkg-btn pkg-btn-outline">Consultar →</a>
+    </div>
+
+    <div class="pkg-card featured fade-up">
+      <div class="pkg-featured-badge">Más popular</div>
+      <div class="pkg-name">Scale</div>
+      <div class="pkg-subtitle">Growth + Conversión + SEO Local</div>
+      <div class="pkg-price">USD 1.890 <span>desde</span></div>
+      <div class="pkg-duration">~9 semanas · Fases 1–4</div>
+      <div class="pkg-divider"></div>
+      <ul class="pkg-features">
+        <li>Todo lo del paquete Growth</li>
+        <li>WhatsApp en PDP + jerarquía CTAs + enlazado interno</li>
+        <li>FAQPage Schema (preguntas frecuentes en Google)</li>
+        <li>Google Business Profile optimizado</li>
+        <li>Meta descriptions optimizadas para CTR</li>
+        <li>Reporte de impacto: CTR · SEO local · conversión mobile</li>
+        <li>3 sesiones de seguimiento + revisión mensual</li>
+      </ul>
+      <a href="https://wa.me/56962595783?text=Quiero%20el%20paquete%20Scale%20de%20WP%20Recover" target="_blank" class="pkg-btn pkg-btn-filled">Consultar →</a>
+    </div>
+
+    <div class="pkg-card fade-up">
+      <div class="pkg-name">Elite</div>
+      <div class="pkg-subtitle">Scale + Performance + Autoridad</div>
+      <div class="pkg-price">USD 2.990 <span>desde</span></div>
+      <div class="pkg-duration">~12 semanas · Fases 1–5</div>
+      <div class="pkg-divider"></div>
+      <ul class="pkg-features">
+        <li>Todo lo del paquete Scale</li>
+        <li>Core Web Vitals LCP &lt;2.5s + WebP masivo</li>
+        <li>Schema AggregateRating con reseñas verificadas</li>
+        <li>3 briefs artículos pillar blog SEO</li>
+        <li>Manual de mantenimiento mensual personalizado</li>
+        <li>Reporte final KPIs inicio vs cierre</li>
+        <li>Sesiones ilimitadas + soporte prioritario 30 días</li>
+      </ul>
+      <a href="https://wa.me/56962595783?text=Quiero%20el%20paquete%20Elite%20de%20WP%20Recover" target="_blank" class="pkg-btn pkg-btn-outline">Consultar →</a>
+    </div>
+
+  </div>
+</section>
+
+<!-- DIFFERENTIATORS -->
+<section>
+  <div class="section-tag">Por qué WP Recover</div>
+  <h2 class="section-title fade-up">La diferencia está en la evidencia.</h2>
+  <p class="section-sub fade-up">No vendemos promesas. Cada ticket entregado tiene un registro verificable de qué había antes, qué se hizo y que funciona.</p>
+
+  <div class="diff-grid">
+    <div class="diff-card fade-up">
+      <div class="diff-icon">🔍</div>
+      <div class="diff-title">Diagnóstico técnico real</div>
+      <div class="diff-desc">Auditoría con comandos verificables: curl, wp-cli, Rich Results Test, PageSpeed API. El cliente recibe el mismo output que el equipo interno.</div>
+    </div>
+    <div class="diff-card fade-up">
+      <div class="diff-icon">✅</div>
+      <div class="diff-title">QA pass por ticket</div>
+      <div class="diff-desc">El QA Agent valida cada ticket con baseline pre-fix y evidencia post-fix. Sin QA pass el ticket no está done — y no se cobra.</div>
+    </div>
+    <div class="diff-card fade-up">
+      <div class="diff-icon">🔄</div>
+      <div class="diff-title">Rollback inmediato</div>
+      <div class="diff-desc">Backup verificado antes de cada sprint. Ante cualquier regresión: rollback inmediato. El cliente nunca queda con el sitio en estado peor que al inicio.</div>
+    </div>
+    <div class="diff-card fade-up">
+      <div class="diff-icon">📊</div>
+      <div class="diff-title">KPIs antes y después</div>
+      <div class="diff-desc">Baseline documentado al inicio. Reporte final con comparación técnica real: URLs indexadas, errores resueltos, performance, conversión mobile.</div>
+    </div>
+    <div class="diff-card fade-up">
+      <div class="diff-icon">🛡️</div>
+      <div class="diff-title">Protocolo WooCommerce</div>
+      <div class="diff-desc">No se actualiza WooCommerce sin test completo del flujo de pago en staging con tarjeta de prueba. El checkout nunca queda roto.</div>
+    </div>
+    <div class="diff-card fade-up">
+      <div class="diff-icon">📚</div>
+      <div class="diff-title">El conocimiento queda</div>
+      <div class="diff-desc">Al cierre el cliente recibe todos los documentos: DONE reports, backlog cerrado, KPIs y manual de mantenimiento. El conocimiento no se va con el consultor.</div>
+    </div>
+  </div>
+</section>
+
+<!-- GUARANTEES -->
+<section id="garantias" style="background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+  <div class="section-tag">Garantías</div>
+  <h2 class="section-title fade-up">Cuatro compromisos concretos.</h2>
+  <p class="section-sub fade-up">No son promesas de marketing — son cláusulas operativas que definen cómo trabajamos en cada proyecto.</p>
+
+  <div class="guarantees-row fade-up">
+    <div class="guarantee-item">
+      <div class="guarantee-icon">✅</div>
+      <div class="guarantee-title">Garantía QA Pass</div>
+      <div class="guarantee-desc">Ningún ticket se factura sin QA pass documentado. Si no pasa, se rehace sin costo.</div>
+    </div>
+    <div class="guarantee-item">
+      <div class="guarantee-icon">↩️</div>
+      <div class="guarantee-title">Garantía Rollback</div>
+      <div class="guarantee-desc">Rollback inmediato ante cualquier regresión. El sitio nunca queda peor que al inicio.</div>
+    </div>
+    <div class="guarantee-item">
+      <div class="guarantee-icon">📏</div>
+      <div class="guarantee-title">Garantía Baseline</div>
+      <div class="guarantee-desc">Toda mejora tiene estado inicial documentado. Compará antes y después con evidencia, no con promesas.</div>
+    </div>
+    <div class="guarantee-item">
+      <div class="guarantee-icon">📄</div>
+      <div class="guarantee-title">Garantía Documentación</div>
+      <div class="guarantee-desc">Al cierre recibís todos los documentos técnicos. El conocimiento no se va con el consultor.</div>
+    </div>
+  </div>
+</section>
+
+<!-- CONTACT -->
+<section id="contacto">
+  <div class="contact-wrap">
+    <div class="section-tag" style="text-align:center;">Contacto</div>
+    <h2 class="section-title fade-up" style="max-width:100%;text-align:center;">Empezá con un diagnóstico gratuito.</h2>
+    <p class="section-sub fade-up" style="max-width:100%;text-align:center;margin-bottom:0;">
+      Revisamos tu sitio en 30 minutos y te entregamos los 3 problemas más graves con evidencia técnica. Sin compromiso. Sin costo.
+    </p>
+    <div class="contact-cards">
+      <a href="https://wa.me/56962595783?text=Hola%2C%20quiero%20un%20diagn%C3%B3stico%20gratuito%20de%20mi%20sitio%20WordPress" target="_blank" class="contact-card">
+        <div class="contact-card-icon cc-wa">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        </div>
+        <div class="contact-card-title">WhatsApp</div>
+        <div class="contact-card-sub">+56 9 6259 5783</div>
+        <div class="contact-card-action">Escribir ahora →</div>
+      </a>
+      <a href="mailto:contacto@wprecover.cl?subject=Diagnóstico gratuito de mi sitio WordPress" class="contact-card">
+        <div class="contact-card-icon cc-email">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </div>
+        <div class="contact-card-title">Email</div>
+        <div class="contact-card-sub">contacto@wprecover.cl</div>
+        <div class="contact-card-action">Enviar correo →</div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <a href="#" class="footer-logo">WP<span>Recover</span></a>
+  <div class="footer-copy">© 2026 WP Recover · Auditoría y Reparación WordPress · LATAM</div>
+  <div class="footer-links">
+    <a href="mailto:contacto@wprecover.cl">contacto@wprecover.cl</a>
+    <a href="https://wa.me/56962595783" target="_blank">WhatsApp</a>
+  </div>
+</footer>
+
+<!-- STICKY WA -->
+<a href="https://wa.me/56962595783?text=Hola%2C%20quiero%20un%20diagn%C3%B3stico%20gratuito%20de%20mi%20sitio%20WordPress" target="_blank" class="sticky-wa" aria-label="Contactar por WhatsApp">
+  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+</a>
+
+<script>
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.12 });
+document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+</script>
+
+
+</div>
+
+<script>
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.12 });
+document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+
+// Re-init scroll observer inside wrapper
+document.querySelectorAll('.fade-up').forEach(el => {
+  new IntersectionObserver(entries => {
+    entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('visible'); });
+  }, {threshold: 0.1}).observe(el);
+});
+</script>

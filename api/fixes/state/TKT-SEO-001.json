@@ -1,0 +1,23 @@
+{
+  "ticket_id": "TKT-SEO-001",
+  "check_name": "meta_generator",
+  "categoria": "SEO",
+  "metodo": "functions.php",
+  "staging_url": "https://staging.cliente.com",
+  "timestamp": "2026-06-08T23:28:06.783131+00:00",
+  "status": "ROLLED_BACK",
+  "fix_payload": {
+    "command": null,
+    "php_snippet": "add_filter('the_generator', '__return_empty_string');",
+    "file_target": "functions.php"
+  },
+  "rollback_payload": {
+    "command": null,
+    "php_snippet": "// Remove: add_filter('the_generator', '__return_empty_string');",
+    "file_target": "functions.php"
+  },
+  "riesgo": "Baja",
+  "requires_approval": false,
+  "approved_by": null,
+  "error": null
+}

@@ -1,0 +1,20 @@
+{
+  "ticket_id": "TKT-SEO-001",
+  "timestamp": "2026-06-08T22:49:18.795290+00:00",
+  "captured_at_epoch": 1780958958.7953203,
+  "metrics": {
+    "pagespeed_score": 42.0,
+    "recovery_score": 38.5,
+    "checks": {
+      "Performance": {
+        "gzip": false,
+        "LCP": false
+      },
+      "SEO": {
+        "title": false,
+        "h1": true,
+        "meta_desc": false
+      }
+    }
+  }
+}

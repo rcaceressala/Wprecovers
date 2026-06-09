@@ -1,0 +1,139 @@
+{
+  "ticket_id": "TKT-REPORT-001",
+  "client_name": "Panaderia Don Pepe",
+  "site_url": "https://panaderiadonpepe.com",
+  "timestamp": "2026-06-08T23:54:41.478422+00:00",
+  "score_before": 23.75,
+  "score_after": 86.25,
+  "improvement_points": 62.5,
+  "improvement_pct": 263.16,
+  "guarantee_met": true,
+  "guarantee_threshold": 15.0,
+  "pdf_path": "C:\\Users\\rcaceres\\Desktop\\WPRecover\\api\\reports\\TKT-REPORT-001_20260608T235441.pdf",
+  "per_category_before": {
+    "SEO": 33.3,
+    "Performance": 0.0,
+    "Conversion": 0.0,
+    "Seguridad": 25.0,
+    "WooCommerce": 66.7
+  },
+  "per_category_after": {
+    "SEO": 100.0,
+    "Performance": 75.0,
+    "Conversion": 75.0,
+    "Seguridad": 75.0,
+    "WooCommerce": 100.0
+  },
+  "checks_fixed_labels": [
+    "Imágenes de productos",
+    "Descripción en Google",
+    "Etiqueta canonical",
+    "Título de la página",
+    "Mapa del sitio XML",
+    "Caché del navegador",
+    "Compresión de archivos (GZIP)",
+    "Velocidad de carga principal (LCP)",
+    "Cabeceras de seguridad HTTP",
+    "Versión WP no expuesta",
+    "Llamada a la acción (CTA)",
+    "Botón de WhatsApp",
+    "Teléfono clickeable en móvil"
+  ],
+  "checks_regressed_labels": [],
+  "chart_data": {
+    "labels": [
+      "SEO",
+      "Performance",
+      "Conversion",
+      "Seguridad",
+      "WooCommerce"
+    ],
+    "before": [
+      33.3,
+      0.0,
+      0.0,
+      25.0,
+      66.7
+    ],
+    "after": [
+      100.0,
+      75.0,
+      75.0,
+      75.0,
+      100.0
+    ],
+    "weights": [
+      30.0,
+      20.0,
+      20.0,
+      15.0,
+      15.0
+    ]
+  },
+  "client_sections": [
+    {
+      "categoria": "SEO",
+      "nombre_simple": "Posicionamiento en Google",
+      "descripcion": "Mejoras que ayudan a que tu negocio aparezca mejor en los resultados de búsqueda.",
+      "score_antes": 33.3,
+      "score_despues": 100.0,
+      "delta": 66.7,
+      "checks_arreglados": [
+        "Descripción en Google",
+        "Etiqueta canonical",
+        "Título de la página",
+        "Mapa del sitio XML"
+      ]
+    },
+    {
+      "categoria": "Performance",
+      "nombre_simple": "Velocidad del sitio",
+      "descripcion": "Optimizaciones que hacen que tu web cargue más rápido, reduciendo el abandono de visitantes.",
+      "score_antes": 0.0,
+      "score_despues": 75.0,
+      "delta": 75.0,
+      "checks_arreglados": [
+        "Caché del navegador",
+        "Compresión de archivos (GZIP)",
+        "Velocidad de carga principal (LCP)"
+      ]
+    },
+    {
+      "categoria": "Conversion",
+      "nombre_simple": "Captación de clientes",
+      "descripcion": "Elementos que facilitan que los visitantes te contacten o realicen una compra.",
+      "score_antes": 0.0,
+      "score_despues": 75.0,
+      "delta": 75.0,
+      "checks_arreglados": [
+        "Llamada a la acción (CTA)",
+        "Botón de WhatsApp",
+        "Teléfono clickeable en móvil"
+      ]
+    },
+    {
+      "categoria": "Seguridad",
+      "nombre_simple": "Seguridad web",
+      "descripcion": "Protecciones que mantienen tu sitio y los datos de tus clientes seguros.",
+      "score_antes": 25.0,
+      "score_despues": 75.0,
+      "delta": 50.0,
+      "checks_arreglados": [
+        "Cabeceras de seguridad HTTP",
+        "Versión WP no expuesta"
+      ]
+    },
+    {
+      "categoria": "WooCommerce",
+      "nombre_simple": "Tienda online",
+      "descripcion": "Correcciones en tu tienda para que los clientes puedan comprar sin problemas.",
+      "score_antes": 66.7,
+      "score_despues": 100.0,
+      "delta": 33.3,
+      "checks_arreglados": [
+        "Imágenes de productos"
+      ]
+    }
+  ],
+  "notas": "Cliente muy satisfecho con la velocidad del sitio."
+}
