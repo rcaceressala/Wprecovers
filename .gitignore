@@ -4,6 +4,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# API keys and credentials
+antropic_api_wprecover.txt
+
 # Environment variables
 .env
 *.env
