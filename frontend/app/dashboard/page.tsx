@@ -192,7 +192,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
                         text-sm rounded-lg px-4 py-3 mb-6">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          {error} — ¿Está corriendo la API en localhost:8000?
+          {error} — ¿Está corriendo la API en {process.env.NEXT_PUBLIC_API_URL ?? 'https://wprecovers.onrender.com'}?
         </div>
       )}
 

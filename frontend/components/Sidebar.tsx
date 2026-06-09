@@ -87,7 +87,9 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-5 py-3 border-t border-border">
-        <p className="text-[10px] text-muted font-mono">API: localhost:8000</p>
+        <p className="text-[10px] text-muted font-mono">
+          API: {process.env.NEXT_PUBLIC_API_URL ?? 'https://wprecovers.onrender.com'}
+        </p>
       </div>
     </div>
   )
