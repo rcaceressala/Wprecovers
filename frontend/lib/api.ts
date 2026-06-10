@@ -111,6 +111,20 @@ export interface SiteContext {
   notas?: string
 }
 
+export interface FixExecutionCommandResult {
+  command: string
+  output: string
+  status: 'ok' | 'error'
+}
+
+export interface FixExecutionResult {
+  executed: boolean
+  success: boolean
+  site_url: string | null
+  results: FixExecutionCommandResult[]
+  error: string | null
+}
+
 export interface AgentResponse {
   agent: string
   scope: string
@@ -122,6 +136,7 @@ export interface AgentResponse {
   estimacion_impacto: string
   tokens_used: number
   timestamp: string
+  fix_execution?: FixExecutionResult | null
 }
 
 export interface AgentInfo { nombre: string; scope: string; model: string }

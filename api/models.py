@@ -260,6 +260,14 @@ class SiteContext(BaseModel):
     notas: Optional[str] = None
 
 
+class FixExecutionResult(BaseModel):
+    executed: bool
+    success: bool = False
+    site_url: Optional[str] = None
+    results: List[Dict[str, Any]] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
 class AgentResponse(BaseModel):
     agent: str
     scope: str
@@ -271,6 +279,7 @@ class AgentResponse(BaseModel):
     estimacion_impacto: str = ""
     tokens_used: int = 0
     timestamp: str
+    fix_execution: Optional[FixExecutionResult] = None
 
 
 class AgentRunRequest(BaseModel):

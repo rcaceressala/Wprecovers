@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react'
 import {
   Play, RefreshCw, AlertTriangle, ChevronDown, ChevronRight,
-  Bot, Sparkles, Clock, Inbox,
+  Bot, Sparkles, Clock, Inbox, CheckCircle, XCircle,
 } from 'lucide-react'
 import {
   api,
   type AgentInfo, type AgentResponse, type Ticket, type SiteContext,
+  type FixExecutionResult,
 } from '@/lib/api'
 
 const SCOPE_COLOR: Record<string, string> = {
@@ -36,6 +37,52 @@ function AgentCard({ agent }: { agent: AgentInfo }) {
         <p className="text-xs text-muted">{agent.scope}</p>
       </div>
       <span className="ml-auto text-[10px] font-mono text-muted">{agent.model.split('-').slice(-2).join('-')}</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Fix execution result (WPRepro Agent plugin)
+// ---------------------------------------------------------------------------
+function FixExecutionBanner({ exec }: { exec: FixExecutionResult }) {
+  if (!exec.executed) {
+    return (
+      <div className="flex items-center gap-2 bg-s2 border border-border rounded-lg
+                      px-3 py-2 text-xs text-muted mb-4">
+        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+        No se pudo enviar el fix al sitio: {exec.error ?? 'error desconocido'}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mb-4">
+      {exec.success ? (
+        <div className="flex items-center gap-2 bg-success/10 border border-success/30 text-success
+                        text-sm rounded-lg px-3 py-2 mb-2">
+          <CheckCircle className="w-4 h-4 flex-shrink-0" />
+          Fix aplicado automáticamente
+          {exec.site_url && <span className="text-xs opacity-80">— {exec.site_url}</span>}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                        text-sm rounded-lg px-3 py-2 mb-2">
+          <XCircle className="w-4 h-4 flex-shrink-0" />
+          El plugin WPRepro Agent no pudo aplicar el fix automáticamente
+        </div>
+      )}
+      {exec.results.length > 0 && (
+        <ul className="space-y-1">
+          {exec.results.map((r, i) => (
+            <li key={i} className="font-mono text-[11px] text-dim flex items-start gap-2">
+              {r.status === 'ok'
+                ? <CheckCircle className="w-3 h-3 text-success flex-shrink-0 mt-0.5" />
+                : <XCircle className="w-3 h-3 text-danger flex-shrink-0 mt-0.5" />}
+              <span className="break-all">{r.command} — {r.output}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -76,6 +123,9 @@ function RecommendationCard({ res }: { res: AgentResponse }) {
           </pre>
         </>
       )}
+
+      {/* Resultado de ejecución automática (WPRepro Agent) */}
+      {res.fix_execution && <FixExecutionBanner exec={res.fix_execution} />}
 
       {/* Mensaje cliente */}
       <p className="text-[10px] text-muted font-mono uppercase tracking-wide mb-1.5">Mensaje Cliente</p>

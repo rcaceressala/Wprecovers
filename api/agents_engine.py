@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from models import AgentResponse, SiteContext, Ticket
+from models import AgentResponse, FixExecutionResult, SiteContext, Ticket
+from wp_agent_client import WPAgentClient
 
 AGENTS_DIR = Path(__file__).parent / "agents"
 _HISTORY_DIR = AGENTS_DIR / "history"
@@ -289,6 +291,66 @@ class AgentHistoryStore:
 
 
 # ---------------------------------------------------------------------------
+# WPRepro Agent — automatic fix execution
+#
+# When an agent suggests one or more `wp ...` commands in fix_sugerido, send
+# them to the WPRepro Agent plugin (WPREPRO_SITE_URL) for execution against
+# the live WordPress site. The plugin only runs commands on its own
+# whitelist, so unsupported suggestions simply come back as status: "error"
+# in fix_execution.results.
+# ---------------------------------------------------------------------------
+
+_WP_CLI_LINE = re.compile(r"^(?:\$\s*)?(wp\s+.+)$")
+
+
+def _extract_wp_cli_commands(fix_sugerido: Optional[str]) -> List[str]:
+    """Pull standalone `wp ...` command lines out of fix_sugerido."""
+    if not fix_sugerido:
+        return []
+    commands: List[str] = []
+    for line in fix_sugerido.splitlines():
+        cleaned = line.strip().strip("`").strip()
+        match = _WP_CLI_LINE.match(cleaned)
+        if match:
+            commands.append(match.group(1).strip())
+    return commands
+
+
+def _maybe_execute_fix(response: AgentResponse) -> None:
+    """Best-effort auto-execution of WP-CLI fixes via the WPRepro Agent plugin."""
+    commands = _extract_wp_cli_commands(response.fix_sugerido)
+    if not commands:
+        return
+
+    site_url = os.getenv("WPREPRO_SITE_URL", "")
+    api_key = os.getenv("WPREPRO_API_KEY", "")
+    if not site_url or not api_key:
+        response.fix_execution = FixExecutionResult(
+            executed=False,
+            error="WPREPRO_SITE_URL / WPREPRO_API_KEY no configurados",
+        )
+        return
+
+    try:
+        client = WPAgentClient(site_url, api_key)
+        data = client.execute(commands)
+        results = data.get("results", [])
+        success = bool(results) and all(r.get("status") == "ok" for r in results)
+        response.fix_execution = FixExecutionResult(
+            executed=True,
+            success=success,
+            site_url=site_url,
+            results=results,
+        )
+    except Exception as exc:
+        response.fix_execution = FixExecutionResult(
+            executed=False,
+            site_url=site_url,
+            error=str(exc),
+        )
+
+
+# ---------------------------------------------------------------------------
 # AgentOrchestrator
 # ---------------------------------------------------------------------------
 
@@ -307,6 +369,7 @@ class AgentOrchestrator:
                 f"Available scopes: {list(SCOPE_TO_AGENT.keys())}"
             )
         response = agent.run(ticket, site_context, historial or [])
+        _maybe_execute_fix(response)
         AgentHistoryStore.append(response)
         return response
 
