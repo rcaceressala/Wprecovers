@@ -1,14 +1,17 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, RefreshCw, AlertTriangle, Inbox, CheckCircle, XCircle } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Inbox, CheckCircle, XCircle, HelpCircle } from 'lucide-react'
 import { api, type EvidenceRecord } from '@/lib/api'
 
-function Delta({ value }: { value: number }) {
+function Delta({ value }: { value: number | null | undefined }) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return <span className="font-mono text-xs text-muted">—</span>
+  }
   const color = value > 0 ? 'text-success' : value < 0 ? 'text-danger' : 'text-muted'
   return (
     <span className={`font-mono text-xs ${color}`}>
-      {value > 0 ? '+' : ''}{value.toFixed(1)}
+      {value > 0 ? '+' : ''}{value.toFixed(1)}%
     </span>
   )
 }
@@ -17,86 +20,21 @@ function Delta({ value }: { value: number }) {
 // Evidence row
 // ---------------------------------------------------------------------------
 function EvidenceRow({ rec }: { rec: EvidenceRecord }) {
-  const [open, setOpen] = useState(false)
   const pass = rec.resultado === 'PASS'
+  const fail = rec.resultado === 'FAIL'
 
   return (
-    <>
-      <tr className="border-b border-border/50 hover:bg-s2 transition-colors cursor-pointer"
-          onClick={() => setOpen(o => !o)}>
-        <td className="py-3 px-3">
-          {open
-            ? <ChevronDown className="w-3.5 h-3.5 text-muted" />
-            : <ChevronRight className="w-3.5 h-3.5 text-muted" />}
-        </td>
-        <td className="py-3 px-2 font-mono text-xs text-dim">{rec.ticket_id}</td>
-        <td className="py-3 px-2 text-xs text-dim">{rec.categoria}</td>
-        <td className="py-3 px-2">
-          {pass
-            ? <span className="badge-pass flex items-center gap-1 w-fit"><CheckCircle className="w-3 h-3" />PASS</span>
-            : <span className="badge-fail flex items-center gap-1 w-fit"><XCircle className="w-3 h-3" />FAIL</span>}
-        </td>
-        <td className="py-3 px-2"><Delta value={rec.delta_metrics.recovery_score_delta} /></td>
-        <td className="py-3 px-2"><Delta value={rec.delta_metrics.pagespeed_score_delta} /></td>
-        <td className="py-3 px-2 text-xs text-muted">{rec.timestamp.slice(0, 10)}</td>
-      </tr>
-
-      {open && (
-        <tr className="bg-s2 border-b border-border">
-          <td colSpan={7} className="px-4 py-4">
-            {/* Before / After comparison */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              {[
-                { label: 'Antes (Baseline)', metrics: rec.baseline },
-                { label: 'Después (Post-Fix)', metrics: rec.post_fix },
-              ].map(({ label, metrics }) => (
-                <div key={label} className="bg-surface border border-border rounded-xl p-4">
-                  <p className="text-xs text-muted font-mono uppercase tracking-wide mb-3">{label}</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      { k: 'Recovery Score', v: metrics.recovery_score },
-                      { k: 'PageSpeed',      v: metrics.pagespeed_score },
-                    ].map(({ k, v }) => (
-                      <div key={k}>
-                        <p className="text-[10px] text-muted mb-0.5">{k}</p>
-                        <p className="text-xl font-mono font-bold text-[#e2e8f0]">{v}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Delta summary */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              {[
-                { label: 'Recovery Δ',  value: rec.delta_metrics.recovery_score_delta },
-                { label: 'PageSpeed Δ', value: rec.delta_metrics.pagespeed_score_delta },
-                { label: 'Checks fixed',value: rec.delta_metrics.checks_fixed },
-                { label: 'Regresiones', value: rec.delta_metrics.checks_regressed },
-              ].map(({ label, value }) => (
-                <div key={label} className="bg-surface border border-border rounded-lg px-3 py-2">
-                  <p className="text-[10px] text-muted">{label}</p>
-                  <Delta value={value} />
-                </div>
-              ))}
-            </div>
-
-            {/* Fix applied */}
-            <p className="text-xs text-muted font-mono uppercase tracking-wide mb-1">Fix Aplicado</p>
-            <div className="bg-surface border border-border rounded-lg px-3 py-2.5 text-xs">
-              <span className="font-mono text-dim">{rec.fix_applied.metodo}</span>
-              <span className="text-muted mx-2">·</span>
-              <span className="text-dim">{rec.fix_applied.descripcion}</span>
-            </div>
-
-            <p className="text-[10px] text-muted mt-2">
-              Tiempo: {rec.time_elapsed_sec}s · {rec.timestamp.replace('T', ' ').slice(0, 19)}
-            </p>
-          </td>
-        </tr>
-      )}
-    </>
+    <tr className="border-b border-border/50 hover:bg-s2 transition-colors">
+      <td className="py-3 px-3 font-mono text-xs text-dim">{rec.ticket_id ?? '—'}</td>
+      <td className="py-3 px-2 text-xs text-dim">{rec.categoria ?? '—'}</td>
+      <td className="py-3 px-2">
+        {pass && <span className="badge-pass flex items-center gap-1 w-fit"><CheckCircle className="w-3 h-3" />PASS</span>}
+        {fail && <span className="badge-fail flex items-center gap-1 w-fit"><XCircle className="w-3 h-3" />FAIL</span>}
+        {!pass && !fail && <span className="flex items-center gap-1 w-fit text-muted text-xs"><HelpCircle className="w-3 h-3" />—</span>}
+      </td>
+      <td className="py-3 px-2"><Delta value={rec.improvement_pct} /></td>
+      <td className="py-3 px-2 text-xs text-muted">{rec.timestamp ? rec.timestamp.slice(0, 10) : '—'}</td>
+    </tr>
   )
 }
 
@@ -113,9 +51,16 @@ export default function QAPage() {
     setError(null)
     try {
       const res = await api.listEvidence()
-      setEvidence(res.evidence ?? [])
+      const list = res?.evidence
+      if (!Array.isArray(list)) {
+        setEvidence([])
+        setError('La API devolvió un formato inesperado para las evidencias de QA.')
+        return
+      }
+      setEvidence(list)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error')
+      setEvidence([])
+      setError(e instanceof Error ? e.message : 'Error al cargar las evidencias de QA')
     } finally {
       setLoading(false)
     }
@@ -178,25 +123,24 @@ export default function QAPage() {
             Usa POST /qa/baseline/:id y POST /qa/validate/:id para registrar evidencias.
           </p>
         </div>
-      ) : (
+      ) : evidence.length > 0 ? (
         <div className="card p-0 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[640px]">
               <thead>
                 <tr className="border-b border-border bg-s2 text-left">
-                  <th className="pb-3 pt-3 px-3 w-6" />
-                  {['Ticket ID','Categoría','Resultado','Recovery Δ','PageSpeed Δ','Fecha'].map(h => (
-                    <th key={h} className="pb-3 pt-3 px-2 text-xs text-muted font-medium">{h}</th>
+                  {['Ticket ID','Categoría','Resultado','Mejora %','Fecha'].map(h => (
+                    <th key={h} className="pb-3 pt-3 px-2 text-xs text-muted font-medium first:px-3">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {evidence.map((rec, i) => <EvidenceRow key={i} rec={rec} />)}
+                {evidence.map((rec, i) => <EvidenceRow key={rec.file ?? i} rec={rec} />)}
               </tbody>
             </table>
           </div>
         </div>
-      )}
+      ) : null}
     </>
   )
 }

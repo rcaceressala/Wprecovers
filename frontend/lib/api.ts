@@ -51,21 +51,12 @@ export interface SiteMetrics {
 }
 
 export interface EvidenceRecord {
-  ticket_id: string
-  categoria: string
-  timestamp: string
-  baseline: SiteMetrics
-  post_fix: SiteMetrics
-  fix_applied: { metodo: string; descripcion: string; archivos_modificados: string[] }
-  resultado: 'PASS' | 'FAIL'
-  delta_metrics: {
-    recovery_score_delta: number
-    pagespeed_score_delta: number
-    checks_fixed: number
-    checks_regressed: number
-    improvement_pct: number
-  }
-  time_elapsed_sec: number
+  file: string
+  ticket_id: string | null
+  categoria: string | null
+  resultado: 'PASS' | 'FAIL' | null
+  timestamp: string | null
+  improvement_pct: number | null
 }
 
 export interface FixPayload {
