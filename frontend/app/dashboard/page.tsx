@@ -9,6 +9,7 @@ import { RecoveryGauge } from '@/components/RecoveryGauge'
 import {
   api, DEMO_AUDIT, scoreColor,
   type TicketResponse, type Ticket, type Prioridad, type AuditInput,
+  type SiteMetrics, type ReportRequest,
 } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,7 @@ export default function DashboardPage() {
   const [error,   setError]   = useState<string | null>(null)
   const [modal,   setModal]   = useState(false)
   const [running, setRunning] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   useEffect(() => {
     const stored = localStorage.getItem('wpr_last_audit')
@@ -162,6 +164,41 @@ export default function DashboardPage() {
       setError(e instanceof Error ? e.message : 'Error al conectar con la API')
     } finally {
       setRunning(false)
+    }
+  }
+
+  async function handleDownloadReport() {
+    if (!data || data.tickets.length === 0) return
+    const ticketId = data.tickets[0].id
+    setDownloadingPdf(true)
+    setError(null)
+    try {
+      const metrics: SiteMetrics = {
+        recovery_score: data.recovery_score,
+        pagespeed_score: data.recovery_score,
+        checks: {},
+      }
+      const reportReq: ReportRequest = {
+        client_name: data.url ?? 'Cliente WPRecover',
+        site_url: data.url ?? '',
+        baseline: metrics,
+        post_fix: metrics,
+        tickets_completados: data.tickets.filter(t => t.estado === 'DONE').map(t => t.id),
+      }
+      await api.generateReport(ticketId, reportReq)
+      const blob = await api.downloadPDF(ticketId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${ticketId}-report.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al generar el reporte PDF')
+    } finally {
+      setDownloadingPdf(false)
     }
   }
 
@@ -300,10 +337,12 @@ export default function DashboardPage() {
               className="btn-ghost flex items-center gap-2 border border-border">
               <Wrench className="w-4 h-4" /> Apply Fix
             </a>
-            <a href={api.downloadPDFUrl(tickets[0]?.id ?? 'none')} target="_blank" rel="noreferrer"
-              className="btn-ghost flex items-center gap-2 border border-border">
-              <Download className="w-4 h-4" /> Download Report
-            </a>
+            <button className="btn-ghost flex items-center gap-2 border border-border"
+              onClick={handleDownloadReport} disabled={downloadingPdf || tickets.length === 0}>
+              {downloadingPdf
+                ? <><RefreshCw className="w-4 h-4 animate-spin" /> Generando reporte…</>
+                : <><Download className="w-4 h-4" /> Download Report</>}
+            </button>
           </div>
         </>
       )}

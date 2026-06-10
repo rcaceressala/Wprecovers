@@ -50,6 +50,27 @@ export interface SiteMetrics {
   checks: Record<string, Record<string, boolean>>
 }
 
+export interface ReportRequest {
+  client_name: string
+  site_url: string
+  client_logo_url?: string | null
+  baseline: SiteMetrics
+  post_fix: SiteMetrics
+  tickets_completados?: string[]
+  notas?: string | null
+}
+
+export interface ReportGenerateResult {
+  ticket_id: string
+  score_before: number
+  score_after: number
+  improvement_points: number
+  improvement_pct: number
+  guarantee_met: boolean
+  pdf_available: boolean
+  timestamp: string
+}
+
 export interface EvidenceRecord {
   file: string
   ticket_id: string | null
@@ -213,7 +234,20 @@ export const api = {
   getReport: (ticketId: string) =>
     apiFetch<Record<string, unknown>>(`/report/${ticketId}`),
 
-  downloadPDFUrl: (ticketId: string) => `${BASE}/report/download/${ticketId}`,
+  generateReport: (ticketId: string, req: ReportRequest) =>
+    apiFetch<ReportGenerateResult>(`/report/generate/${ticketId}`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  downloadPDF: async (ticketId: string): Promise<Blob> => {
+    const res = await fetch(`${BASE}/report/download/${ticketId}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`)
+    }
+    return res.blob()
+  },
 
   // M6 — Agents
   listAgents: () =>
