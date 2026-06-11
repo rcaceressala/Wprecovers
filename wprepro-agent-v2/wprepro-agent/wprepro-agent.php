@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WPRepro Agent
  * Plugin URI:  https://wprecoverpro.com
- * Description: Agente remoto de WPRecover 2.0. Conecta con el backend FastAPI, recibe recomendaciones de los agentes IA y ejecuta fixes WP-CLI permitidos automáticamente.
- * Version:     2.3.0
+ * Description: Agente remoto de WPRecover 2.0. Conecta con el backend FastAPI, recibe recomendaciones de los agentes IA y ejecuta fixes (sintaxis estilo WP-CLI mapeada a funciones nativas de WordPress, sin shell ni WP-CLI real) y snippets PHP aprobados.
+ * Version:     2.4.0
  * Author:      WPRecover Pro
  * License:     GPL-2.0+
  * Text Domain: wprepro-agent
@@ -11,7 +11,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'WPREPRO_VERSION', '2.3.0' );
+define( 'WPREPRO_VERSION', '2.4.0' );
 define( 'WPREPRO_API_NS',  'wprepro/v1' );
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ function wprepro_settings_page(): void {
         <div style="margin:12px 0;padding:10px 14px;border-left:4px solid <?php echo $key_set ? '#46b450' : '#dc3232'; ?>;background:#fff;">
             <?php if ( $key_set ) : ?>
                 &#9989; <strong>WPREPRO_API_KEY configurada</strong> — endpoints de ejecución listos:<br>
-                <code><?php echo esc_html( $execute_ep ); ?></code> (WP-CLI)<br>
+                <code><?php echo esc_html( $execute_ep ); ?></code> (comandos)<br>
                 <code><?php echo esc_html( $snippet_ep ); ?></code> (PHP snippets)
             <?php else : ?>
                 &#10060; <strong>WPREPRO_API_KEY no definida.</strong> Agrega esto a <code>wp-config.php</code> antes de
@@ -192,8 +192,8 @@ function wprepro_authenticate( WP_REST_Request $request ) {
     if ( ! defined( 'WPREPRO_API_KEY' ) || empty( WPREPRO_API_KEY ) ) {
         return new WP_Error(
             'wprepro_not_configured',
-            'WPRepro Agent no está configurado. Define WPREPRO_API_KEY en wp-config.php.',
-            [ 'status' => 500 ]
+            'WPRepro Agent no está configurado: falta WPREPRO_API_KEY en wp-config.php. Revisa Ajustes → WPRepro Agent.',
+            [ 'status' => 503 ]
         );
     }
 
@@ -483,33 +483,45 @@ function wprepro_execute_command( string $command ): array {
  * Returns: {"results": [{"command": "...", "output": "...", "status": "ok|error"}]}
  */
 function wprepro_route_execute( WP_REST_Request $request ): WP_REST_Response {
-    $body     = $request->get_json_params();
-    $commands = $body['commands'] ?? null;
+    try {
+        $body     = $request->get_json_params();
+        $commands = $body['commands'] ?? null;
 
-    if ( ! is_array( $commands ) || empty( $commands ) ) {
-        return new WP_REST_Response( [
-            'results' => [],
-            'error'   => 'Field "commands" must be a non-empty array',
-        ], 400 );
-    }
-
-    $results = [];
-    foreach ( $commands as $command ) {
-        $command = trim( (string) $command );
-
-        if ( ! wprepro_is_command_allowed( $command ) ) {
-            $results[] = [
-                'command' => $command,
-                'output'  => 'Command not allowed by whitelist',
-                'status'  => 'error',
-            ];
-            continue;
+        if ( ! is_array( $commands ) || empty( $commands ) ) {
+            return new WP_REST_Response( [
+                'results' => [],
+                'error'   => 'Field "commands" must be a non-empty array',
+            ], 400 );
         }
 
-        $results[] = wprepro_execute_command( $command );
-    }
+        $results = [];
+        foreach ( $commands as $command ) {
+            $command = trim( (string) $command );
 
-    return new WP_REST_Response( [ 'results' => $results ], 200 );
+            if ( ! wprepro_is_command_allowed( $command ) ) {
+                $results[] = [
+                    'command' => $command,
+                    'output'  => 'Command not allowed by whitelist',
+                    'status'  => 'error',
+                ];
+                continue;
+            }
+
+            $results[] = wprepro_execute_command( $command );
+        }
+
+        return new WP_REST_Response( [ 'results' => $results ], 200 );
+    } catch ( \Throwable $e ) {
+        return new WP_REST_Response( [
+            'results'      => [],
+            'error'        => $e->getMessage(),
+            'error_detail' => [
+                'type' => get_class( $e ),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ],
+        ], 500 );
+    }
 }
 
 // ── /execute-snippet: stage / activate / delete PHP fix snippets ────────────
@@ -527,17 +539,28 @@ function wprepro_route_execute( WP_REST_Request $request ): WP_REST_Response {
  * Returns: {"snippet_id": int, "status": "active"|"inactive"|"deleted"}
  */
 function wprepro_route_execute_snippet( WP_REST_Request $request ): WP_REST_Response {
-    $body   = $request->get_json_params();
-    $action = $body['action'] ?? 'create';
+    try {
+        $body   = $request->get_json_params();
+        $action = $body['action'] ?? 'create';
 
-    switch ( $action ) {
-        case 'activate':
-            return wprepro_activate_fix_snippet( $body );
-        case 'delete':
-            return wprepro_delete_fix_snippet( $body );
-        case 'create':
-        default:
-            return wprepro_create_fix_snippet( $body );
+        switch ( $action ) {
+            case 'activate':
+                return wprepro_activate_fix_snippet( $body );
+            case 'delete':
+                return wprepro_delete_fix_snippet( $body );
+            case 'create':
+            default:
+                return wprepro_create_fix_snippet( $body );
+        }
+    } catch ( \Throwable $e ) {
+        return new WP_REST_Response( [
+            'error'        => $e->getMessage(),
+            'error_detail' => [
+                'type' => get_class( $e ),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ],
+        ], 500 );
     }
 }
 
