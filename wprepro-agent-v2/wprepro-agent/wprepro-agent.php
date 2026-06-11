@@ -3,7 +3,7 @@
  * Plugin Name: WPRepro Agent
  * Plugin URI:  https://wprecoverpro.com
  * Description: Agente remoto de WPRecover 2.0. Conecta con el backend FastAPI, recibe recomendaciones de los agentes IA y ejecuta fixes WP-CLI permitidos automáticamente.
- * Version:     2.2.0
+ * Version:     2.3.0
  * Author:      WPRecover Pro
  * License:     GPL-2.0+
  * Text Domain: wprepro-agent
@@ -11,7 +11,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'WPREPRO_VERSION', '2.2.0' );
+define( 'WPREPRO_VERSION', '2.3.0' );
 define( 'WPREPRO_API_NS',  'wprepro/v1' );
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -37,9 +37,10 @@ function wprepro_settings_page(): void {
     $status     = wprepro_check_connection( $api_url );
     $key_set    = defined( 'WPREPRO_API_KEY' ) && ! empty( WPREPRO_API_KEY );
     $execute_ep = trailingslashit( get_site_url() ) . 'wp-json/' . WPREPRO_API_NS . '/execute';
+    $snippet_ep = trailingslashit( get_site_url() ) . 'wp-json/' . WPREPRO_API_NS . '/execute-snippet';
     ?>
     <div class="wrap">
-        <h1>WPRepro Agent</h1>
+        <h1>WPRepro Agent <small style="font-weight:normal;color:#646970;">v<?php echo esc_html( WPREPRO_VERSION ); ?></small></h1>
 
         <div style="margin:12px 0;padding:10px 14px;border-left:4px solid <?php echo $status['ok'] ? '#46b450' : '#dc3232'; ?>;background:#fff;">
             <?php if ( $status['ok'] ) : ?>
@@ -51,8 +52,9 @@ function wprepro_settings_page(): void {
 
         <div style="margin:12px 0;padding:10px 14px;border-left:4px solid <?php echo $key_set ? '#46b450' : '#dc3232'; ?>;background:#fff;">
             <?php if ( $key_set ) : ?>
-                &#9989; <strong>WPREPRO_API_KEY configurada</strong> — endpoint de ejecución listo:<br>
-                <code><?php echo esc_html( $execute_ep ); ?></code>
+                &#9989; <strong>WPREPRO_API_KEY configurada</strong> — endpoints de ejecución listos:<br>
+                <code><?php echo esc_html( $execute_ep ); ?></code> (WP-CLI)<br>
+                <code><?php echo esc_html( $snippet_ep ); ?></code> (PHP snippets)
             <?php else : ?>
                 &#10060; <strong>WPREPRO_API_KEY no definida.</strong> Agrega esto a <code>wp-config.php</code> antes de
                 <code>/* That's all, stop editing! */</code>:<br>
