@@ -5,9 +5,10 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, Ticket, ShieldCheck, Bot, CreditCard,
-  Menu, X, Zap,
+  Menu, X, Zap, LogOut,
 } from 'lucide-react'
 import { RecoveryGauge } from './RecoveryGauge'
+import { logout } from '@/lib/auth'
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -86,8 +87,15 @@ export function Sidebar() {
       )}
 
       {/* Footer */}
-      <div className="px-5 py-3 border-t border-border">
-        <p className="text-[10px] text-muted font-mono">
+      <div className="px-5 py-3 border-t border-border space-y-2">
+        <button
+          onClick={logout}
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-muted hover:text-danger hover:bg-s2 transition-all w-full"
+        >
+          <LogOut className="w-4 h-4 flex-shrink-0" />
+          Cerrar sesión
+        </button>
+        <p className="text-[10px] text-muted font-mono px-3">
           API: {process.env.NEXT_PUBLIC_API_URL ?? 'https://wprecovers.onrender.com'}
         </p>
       </div>
