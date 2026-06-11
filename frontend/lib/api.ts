@@ -111,18 +111,24 @@ export interface SiteContext {
   notas?: string
 }
 
-export interface FixExecutionCommandResult {
-  command: string
-  output: string
-  status: 'ok' | 'error'
-}
+export type PendingFixStatus = 'pending' | 'applied' | 'error'
 
-export interface FixExecutionResult {
-  executed: boolean
-  success: boolean
-  site_url: string | null
-  results: FixExecutionCommandResult[]
+export interface PendingFix {
+  ticket_id: string
+  categoria: string
+  agent: string
+  titulo: string
+  wp_cli_commands: string[]
+  php_snippet: string | null
+  site_url: string
+  snippet_id: number | null
+  snippet_status: string | null
+  auto_approve: boolean
+  status: PendingFixStatus
   error: string | null
+  created_at: string
+  applied_at: string | null
+  approval_results: Record<string, unknown> | null
 }
 
 export interface AgentResponse {
@@ -136,7 +142,7 @@ export interface AgentResponse {
   estimacion_impacto: string
   tokens_used: number
   timestamp: string
-  fix_execution?: FixExecutionResult | null
+  pending_fix?: PendingFix | null
 }
 
 export interface AgentInfo { nombre: string; scope: string; model: string }
@@ -278,6 +284,16 @@ export const api = {
     apiFetch<{ ticket_id: string; total_interactions: number; history: AgentResponse[] }>(
       `/agents/history/${ticketId}`
     ),
+
+  // M6 — Fix Approval
+  approveFix: (ticketId: string) =>
+    apiFetch<PendingFix>(`/fixes/approve/${ticketId}`, { method: 'POST' }),
+
+  rejectFix: (ticketId: string) =>
+    apiFetch<{ ticket_id: string; status: string }>(`/fixes/reject/${ticketId}`, { method: 'POST' }),
+
+  listPendingFixes: () =>
+    apiFetch<{ pending: PendingFix[] }>('/fixes/pending/'),
 
   // M1 — Real Audit
   runAudit: (url: string) =>

@@ -260,12 +260,22 @@ class SiteContext(BaseModel):
     notas: Optional[str] = None
 
 
-class FixExecutionResult(BaseModel):
-    executed: bool
-    success: bool = False
-    site_url: Optional[str] = None
-    results: List[Dict[str, Any]] = Field(default_factory=list)
+class PendingFix(BaseModel):
+    ticket_id: str
+    categoria: str
+    agent: str
+    titulo: str
+    wp_cli_commands: List[str] = Field(default_factory=list)
+    php_snippet: Optional[str] = None
+    site_url: str
+    snippet_id: Optional[int] = None
+    snippet_status: Optional[str] = None
+    auto_approve: bool = False
+    status: Literal["pending", "applied", "error"] = "pending"
     error: Optional[str] = None
+    created_at: str
+    applied_at: Optional[str] = None
+    approval_results: Optional[Dict[str, Any]] = None
 
 
 class AgentResponse(BaseModel):
@@ -279,7 +289,7 @@ class AgentResponse(BaseModel):
     estimacion_impacto: str = ""
     tokens_used: int = 0
     timestamp: str
-    fix_execution: Optional[FixExecutionResult] = None
+    pending_fix: Optional[PendingFix] = None
 
 
 class AgentRunRequest(BaseModel):

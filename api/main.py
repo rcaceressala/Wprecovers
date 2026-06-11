@@ -3,6 +3,7 @@ from __future__ import annotations
 # Trigger Render redeploy
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -33,13 +34,14 @@ from models import (
 
 class AuditRunRequest(BaseModel):
     url: str
-from agents_engine import AgentHistoryStore, AgentOrchestrator, SCOPE_TO_AGENT
+from agents_engine import AgentHistoryStore, AgentOrchestrator, PendingFixStore, SCOPE_TO_AGENT
 from audit_engine import run_full_audit
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
 from report_engine import GuaranteeEvaluator, ReportStore, build_full_report
 from ticket_engine import generate_tickets
+from wp_agent_client import WPAgentClient
 
 app = FastAPI(
     title="WPRecover API",
@@ -469,6 +471,83 @@ def list_agents():
         ],
         "processed_tickets": AgentHistoryStore.list_all(),
     }
+
+
+# ---------------------------------------------------------------------------
+# M6 — Fix Approval (pending fixes staged by AI agents)
+# ---------------------------------------------------------------------------
+
+@app.post("/fixes/approve/{ticket_id}", tags=["M6 Agents"])
+def approve_fix(ticket_id: str):
+    """
+    Apply a pending fix: activates its PHP snippet (if any) and runs any
+    staged WP-CLI commands against the live WordPress site.
+    """
+    record = PendingFixStore.get(ticket_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No hay fix pendiente para el ticket '{ticket_id}'")
+    if record.get("status") != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"El fix del ticket '{ticket_id}' no está pendiente (status={record.get('status')})",
+        )
+
+    site_url = record.get("site_url") or os.getenv("WPREPRO_SITE_URL", "")
+    api_key = os.getenv("WPREPRO_API_KEY", "")
+    client = WPAgentClient(site_url, api_key)
+
+    try:
+        results = {}
+        if record.get("snippet_id") is not None:
+            data = client.execute_snippet({"action": "activate", "snippet_id": record["snippet_id"]})
+            record["snippet_status"] = data.get("status")
+            results["snippet"] = data
+        if record.get("wp_cli_commands"):
+            data = client.execute(record["wp_cli_commands"])
+            results["wp_cli"] = data.get("results", [])
+
+        record["status"] = "applied"
+        record["applied_at"] = datetime.now(timezone.utc).isoformat()
+        record["approval_results"] = results
+        record["error"] = None
+        PendingFixStore.save(ticket_id, record)
+        return record
+    except Exception as exc:
+        record["status"] = "error"
+        record["error"] = str(exc)
+        PendingFixStore.save(ticket_id, record)
+        raise HTTPException(status_code=502, detail=f"Error aplicando el fix: {exc}")
+
+
+@app.post("/fixes/reject/{ticket_id}", tags=["M6 Agents"])
+def reject_fix(ticket_id: str):
+    """
+    Discard a pending fix: removes its PHP snippet from WordPress (if any) and
+    deletes the local pending record.
+    """
+    record = PendingFixStore.get(ticket_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No hay fix pendiente para el ticket '{ticket_id}'")
+
+    if record.get("snippet_id") is not None:
+        site_url = record.get("site_url") or os.getenv("WPREPRO_SITE_URL", "")
+        api_key = os.getenv("WPREPRO_API_KEY", "")
+        try:
+            client = WPAgentClient(site_url, api_key)
+            client.execute_snippet({"action": "delete", "snippet_id": record["snippet_id"]})
+        except Exception:
+            pass
+
+    PendingFixStore.delete(ticket_id)
+    return {"ticket_id": ticket_id, "status": "rejected"}
+
+
+@app.get("/fixes/pending/", tags=["M6 Agents"])
+def list_pending_fixes():
+    """
+    List all fixes awaiting human approval.
+    """
+    return {"pending": [r for r in PendingFixStore.list_all() if r.get("status") == "pending"]}
 
 
 # ---------------------------------------------------------------------------

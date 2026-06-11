@@ -3,12 +3,12 @@
 import { useEffect, useState } from 'react'
 import {
   Play, RefreshCw, AlertTriangle, ChevronDown, ChevronRight,
-  Bot, Sparkles, Clock, Inbox, CheckCircle, XCircle,
+  Bot, Sparkles, Clock, Inbox, CheckCircle, XCircle, Wrench,
 } from 'lucide-react'
 import {
   api,
   type AgentInfo, type AgentResponse, type Ticket, type SiteContext,
-  type FixExecutionResult,
+  type PendingFix,
 } from '@/lib/api'
 
 const SCOPE_COLOR: Record<string, string> = {
@@ -42,47 +42,141 @@ function AgentCard({ agent }: { agent: AgentInfo }) {
 }
 
 // ---------------------------------------------------------------------------
-// Fix execution result (WPRepro Agent plugin)
+// Pending fix approval card (WPRepro Agent plugin)
 // ---------------------------------------------------------------------------
-function FixExecutionBanner({ exec }: { exec: FixExecutionResult }) {
-  if (!exec.executed) {
+function PendingFixCard({
+  pendingFix, ticketId, onChange,
+}: { pendingFix: PendingFix; ticketId: string; onChange: (updated: PendingFix | null) => void }) {
+  const [loading, setLoading] = useState<'approve' | 'reject' | null>(null)
+  const [actionErr, setActionErr] = useState<string | null>(null)
+
+  const handleApprove = async () => {
+    setLoading('approve')
+    setActionErr(null)
+    try {
+      const updated = await api.approveFix(ticketId)
+      onChange(updated)
+    } catch (e: unknown) {
+      setActionErr(e instanceof Error ? e.message : 'Error al aprobar el fix')
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const handleReject = async () => {
+    setLoading('reject')
+    setActionErr(null)
+    try {
+      await api.rejectFix(ticketId)
+      onChange(null)
+    } catch (e: unknown) {
+      setActionErr(e instanceof Error ? e.message : 'Error al rechazar el fix')
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  if (pendingFix.status === 'error') {
     return (
-      <div className="flex items-center gap-2 bg-s2 border border-border rounded-lg
-                      px-3 py-2 text-xs text-muted mb-4">
-        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-        No se pudo enviar el fix al sitio: {exec.error ?? 'error desconocido'}
+      <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                      text-sm rounded-lg px-3 py-2 mb-4">
+        <XCircle className="w-4 h-4 flex-shrink-0" />
+        No se pudo preparar el fix: {pendingFix.error ?? 'error desconocido'}
       </div>
     )
   }
 
-  return (
-    <div className="mb-4">
-      {exec.success ? (
+  if (pendingFix.status === 'applied') {
+    const results = (pendingFix.approval_results ?? {}) as {
+      wp_cli?: { command: string; output: string; status: 'ok' | 'error' }[]
+      snippet?: { snippet_id: number; status: string }
+    }
+    return (
+      <div className="mb-4">
         <div className="flex items-center gap-2 bg-success/10 border border-success/30 text-success
                         text-sm rounded-lg px-3 py-2 mb-2">
           <CheckCircle className="w-4 h-4 flex-shrink-0" />
-          Fix aplicado automáticamente
-          {exec.site_url && <span className="text-xs opacity-80">— {exec.site_url}</span>}
+          ✅ Fix aplicado automáticamente
+          {pendingFix.site_url && <span className="text-xs opacity-80">— {pendingFix.site_url}</span>}
         </div>
-      ) : (
-        <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
-                        text-sm rounded-lg px-3 py-2 mb-2">
-          <XCircle className="w-4 h-4 flex-shrink-0" />
-          El plugin WPRepro Agent no pudo aplicar el fix automáticamente
-        </div>
+        {(results.wp_cli?.length ?? 0) > 0 && (
+          <ul className="space-y-1">
+            {results.wp_cli!.map((r, i) => (
+              <li key={i} className="font-mono text-[11px] text-dim flex items-start gap-2">
+                {r.status === 'ok'
+                  ? <CheckCircle className="w-3 h-3 text-success flex-shrink-0 mt-0.5" />
+                  : <XCircle className="w-3 h-3 text-danger flex-shrink-0 mt-0.5" />}
+                <span className="break-all">{r.command} — {r.output}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {results.snippet && (
+          <p className="font-mono text-[11px] text-dim flex items-center gap-2 mt-1">
+            <CheckCircle className="w-3 h-3 text-success flex-shrink-0" />
+            Snippet PHP #{results.snippet.snippet_id} activado en el sitio
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  // status === 'pending'
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 bg-accent/10 border border-accent/30 text-accent
+                      text-sm rounded-lg px-3 py-2 mb-2">
+        <Wrench className="w-4 h-4 flex-shrink-0" />
+        Fix listo para aplicar
+        {pendingFix.site_url && <span className="text-xs opacity-80">— {pendingFix.site_url}</span>}
+      </div>
+
+      {pendingFix.php_snippet && (
+        <>
+          <p className="text-[10px] text-muted font-mono uppercase tracking-wide mb-1.5">Preview del código PHP</p>
+          <pre className="bg-bg border border-border rounded-lg p-3 text-xs text-dim
+                          overflow-x-auto whitespace-pre-wrap mb-2">
+            {pendingFix.php_snippet}
+          </pre>
+        </>
       )}
-      {exec.results.length > 0 && (
-        <ul className="space-y-1">
-          {exec.results.map((r, i) => (
-            <li key={i} className="font-mono text-[11px] text-dim flex items-start gap-2">
-              {r.status === 'ok'
-                ? <CheckCircle className="w-3 h-3 text-success flex-shrink-0 mt-0.5" />
-                : <XCircle className="w-3 h-3 text-danger flex-shrink-0 mt-0.5" />}
-              <span className="break-all">{r.command} — {r.output}</span>
-            </li>
+
+      {pendingFix.wp_cli_commands.length > 0 && (
+        <ul className="space-y-1 mb-2">
+          {pendingFix.wp_cli_commands.map((c, i) => (
+            <li key={i} className="font-mono text-[11px] text-dim break-all">$ {c}</li>
           ))}
         </ul>
       )}
+
+      {actionErr && <p className="text-xs text-danger mb-2">{actionErr}</p>}
+
+      <div className="flex gap-2">
+        <button
+          className="flex items-center gap-2 bg-success/10 hover:bg-success/20 border border-success/30
+                     text-success text-sm font-medium rounded-lg px-3 py-1.5 transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={handleApprove}
+          disabled={loading !== null}
+        >
+          {loading === 'approve'
+            ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            : null}
+          ✓ Aprobar y aplicar
+        </button>
+        <button
+          className="flex items-center gap-2 bg-danger/10 hover:bg-danger/20 border border-danger/30
+                     text-danger text-sm font-medium rounded-lg px-3 py-1.5 transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={handleReject}
+          disabled={loading !== null}
+        >
+          {loading === 'reject'
+            ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            : null}
+          ✗ Rechazar
+        </button>
+      </div>
     </div>
   )
 }
@@ -90,7 +184,9 @@ function FixExecutionBanner({ exec }: { exec: FixExecutionResult }) {
 // ---------------------------------------------------------------------------
 // Recommendation display
 // ---------------------------------------------------------------------------
-function RecommendationCard({ res }: { res: AgentResponse }) {
+function RecommendationCard({
+  res, onPendingFixChange,
+}: { res: AgentResponse; onPendingFixChange: (updated: PendingFix | null) => void }) {
   const col = SCOPE_COLOR[res.scope] ?? '#6b7280'
   return (
     <div className="card border-l-4 animate-slide-in" style={{ borderLeftColor: col }}>
@@ -124,8 +220,14 @@ function RecommendationCard({ res }: { res: AgentResponse }) {
         </>
       )}
 
-      {/* Resultado de ejecución automática (WPRepro Agent) */}
-      {res.fix_execution && <FixExecutionBanner exec={res.fix_execution} />}
+      {/* Aprobación de fix (WPRepro Agent) */}
+      {res.pending_fix && (
+        <PendingFixCard
+          pendingFix={res.pending_fix}
+          ticketId={res.ticket_id}
+          onChange={onPendingFixChange}
+        />
+      )}
 
       {/* Mensaje cliente */}
       <p className="text-[10px] text-muted font-mono uppercase tracking-wide mb-1.5">Mensaje Cliente</p>
@@ -361,7 +463,14 @@ export default function AgentsPage() {
           </div>
 
           {/* Result */}
-          {result && <RecommendationCard res={result} />}
+          {result && (
+            <RecommendationCard
+              res={result}
+              onPendingFixChange={(updated) =>
+                setResult(prev => prev ? { ...prev, pending_fix: updated } : prev)
+              }
+            />
+          )}
 
           {/* History */}
           {processed.length > 0 && (

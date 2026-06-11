@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from models import AgentResponse, FixExecutionResult, SiteContext, Ticket
+from models import AgentResponse, PendingFix, SiteContext, Ticket
 from wp_agent_client import WPAgentClient
 
 AGENTS_DIR = Path(__file__).parent / "agents"
 _HISTORY_DIR = AGENTS_DIR / "history"
+_PENDING_DIR = Path(__file__).parent / "fixes" / "pending"
 
 _MODEL = "claude-sonnet-4-6"
 
@@ -291,16 +292,19 @@ class AgentHistoryStore:
 
 
 # ---------------------------------------------------------------------------
-# WPRepro Agent — automatic fix execution
+# WPRepro Agent — pending fix pipeline
 #
-# When an agent suggests one or more `wp ...` commands in fix_sugerido, send
-# them to the WPRepro Agent plugin (WPREPRO_SITE_URL) for execution against
-# the live WordPress site. The plugin only runs commands on its own
-# whitelist, so unsupported suggestions simply come back as status: "error"
-# in fix_execution.results.
+# When an agent suggests `wp ...` commands and/or a PHP snippet in
+# fix_sugerido, stage them as a pending fix (api/fixes/pending/{ticket_id}.json)
+# and — unless FIX_AUTO_APPROVE=true — wait for a human to approve via
+# POST /fixes/approve/{ticket_id} before anything runs against the live
+# WordPress site (WPREPRO_SITE_URL).
 # ---------------------------------------------------------------------------
 
 _WP_CLI_LINE = re.compile(r"^(?:\$\s*)?(wp\s+.+)$")
+_PHP_FENCE = re.compile(r"```php\s*\n([\s\S]*?)```", re.IGNORECASE)
+_GENERIC_FENCE = re.compile(r"```(?:\w+)?\s*\n([\s\S]*?)```")
+_PHP_HINT = re.compile(r"add_action\(|add_filter\(|function\s+\w+\s*\(|<\?php|update_option\(|wp_enqueue")
 
 
 def _extract_wp_cli_commands(fix_sugerido: Optional[str]) -> List[str]:
@@ -316,38 +320,150 @@ def _extract_wp_cli_commands(fix_sugerido: Optional[str]) -> List[str]:
     return commands
 
 
-def _maybe_execute_fix(response: AgentResponse) -> None:
-    """Best-effort auto-execution of WP-CLI fixes via the WPRepro Agent plugin."""
+def _strip_php_tags(code: str) -> str:
+    code = re.sub(r"^\s*<\?php\s*", "", code.strip(), flags=re.IGNORECASE)
+    code = re.sub(r"\?>\s*$", "", code.strip())
+    return code.strip()
+
+
+def _extract_php_snippet(fix_sugerido: Optional[str]) -> Optional[str]:
+    """Pull a PHP code snippet out of fix_sugerido, if present."""
+    if not fix_sugerido:
+        return None
+
+    match = _PHP_FENCE.search(fix_sugerido)
+    if match:
+        return _strip_php_tags(match.group(1))
+
+    match = _GENERIC_FENCE.search(fix_sugerido)
+    if match and _PHP_HINT.search(match.group(1)):
+        return _strip_php_tags(match.group(1))
+
+    if "<?php" in fix_sugerido:
+        return _strip_php_tags(fix_sugerido[fix_sugerido.index("<?php"):])
+
+    if _PHP_HINT.search(fix_sugerido) and not _extract_wp_cli_commands(fix_sugerido):
+        return _strip_php_tags(fix_sugerido)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# PendingFixStore — one JSON file per ticket under api/fixes/pending/
+# ---------------------------------------------------------------------------
+
+class PendingFixStore:
+    @staticmethod
+    def _path(ticket_id: str) -> Path:
+        _PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        return _PENDING_DIR / f"{ticket_id}.json"
+
+    @classmethod
+    def save(cls, ticket_id: str, record: Dict[str, Any]) -> Path:
+        path = cls._path(ticket_id)
+        path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    @classmethod
+    def get(cls, ticket_id: str) -> Optional[Dict[str, Any]]:
+        path = cls._path(ticket_id)
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    @classmethod
+    def delete(cls, ticket_id: str) -> bool:
+        path = cls._path(ticket_id)
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    @classmethod
+    def list_all(cls) -> List[Dict[str, Any]]:
+        if not _PENDING_DIR.exists():
+            return []
+        result: List[Dict[str, Any]] = []
+        for f in sorted(_PENDING_DIR.glob("*.json")):
+            try:
+                result.append(json.loads(f.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+        return result
+
+
+def _build_pending_fix(response: AgentResponse, ticket: Ticket) -> None:
+    """Stage wp-cli commands / a PHP snippet from fix_sugerido as a pending fix.
+
+    Nothing runs against the live site until /fixes/approve/{ticket_id} is
+    called, unless FIX_AUTO_APPROVE=true.
+    """
     commands = _extract_wp_cli_commands(response.fix_sugerido)
-    if not commands:
+    php_snippet = _extract_php_snippet(response.fix_sugerido)
+    if not commands and not php_snippet:
         return
 
     site_url = os.getenv("WPREPRO_SITE_URL", "")
     api_key = os.getenv("WPREPRO_API_KEY", "")
+    auto_approve = os.getenv("FIX_AUTO_APPROVE", "false").strip().lower() == "true"
+
+    record: Dict[str, Any] = {
+        "ticket_id": ticket.id,
+        "categoria": str(ticket.categoria).split(".")[-1],
+        "agent": response.agent,
+        "titulo": ticket.titulo,
+        "wp_cli_commands": commands,
+        "php_snippet": php_snippet,
+        "site_url": site_url,
+        "snippet_id": None,
+        "snippet_status": None,
+        "auto_approve": auto_approve,
+        "status": "pending",
+        "error": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "applied_at": None,
+        "approval_results": None,
+    }
+
     if not site_url or not api_key:
-        response.fix_execution = FixExecutionResult(
-            executed=False,
-            error="WPREPRO_SITE_URL / WPREPRO_API_KEY no configurados",
-        )
+        record["status"] = "error"
+        record["error"] = "WPREPRO_SITE_URL / WPREPRO_API_KEY no configurados"
+        PendingFixStore.save(ticket.id, record)
+        response.pending_fix = PendingFix(**record)
         return
 
+    client = WPAgentClient(site_url, api_key)
     try:
-        client = WPAgentClient(site_url, api_key)
-        data = client.execute(commands)
-        results = data.get("results", [])
-        success = bool(results) and all(r.get("status") == "ok" for r in results)
-        response.fix_execution = FixExecutionResult(
-            executed=True,
-            success=success,
-            site_url=site_url,
-            results=results,
-        )
+        if php_snippet:
+            data = client.execute_snippet({
+                "action": "create",
+                "ticket_id": ticket.id,
+                "title": f"WPRecover Fix {ticket.id} ({response.agent})",
+                "code": php_snippet,
+                "auto_approve": auto_approve,
+            })
+            record["snippet_id"] = data.get("snippet_id")
+            record["snippet_status"] = data.get("status")
+
+        if auto_approve:
+            results: Dict[str, Any] = {}
+            if commands:
+                wp_cli = client.execute(commands)
+                results["wp_cli"] = wp_cli.get("results", [])
+            if record["snippet_id"] is not None:
+                results["snippet"] = {
+                    "snippet_id": record["snippet_id"],
+                    "status": record["snippet_status"],
+                }
+            record["status"] = "applied"
+            record["applied_at"] = datetime.now(timezone.utc).isoformat()
+            record["approval_results"] = results
     except Exception as exc:
-        response.fix_execution = FixExecutionResult(
-            executed=False,
-            site_url=site_url,
-            error=str(exc),
-        )
+        record["status"] = "error"
+        record["error"] = str(exc)
+
+    PendingFixStore.save(ticket.id, record)
+    response.pending_fix = PendingFix(**record)
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +485,7 @@ class AgentOrchestrator:
                 f"Available scopes: {list(SCOPE_TO_AGENT.keys())}"
             )
         response = agent.run(ticket, site_context, historial or [])
-        _maybe_execute_fix(response)
+        _build_pending_fix(response, ticket)
         AgentHistoryStore.append(response)
         return response
 
