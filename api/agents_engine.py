@@ -298,7 +298,7 @@ class AgentHistoryStore:
 # fix_sugerido, stage them as a pending fix (api/fixes/pending/{ticket_id}.json)
 # and — unless FIX_AUTO_APPROVE=true — wait for a human to approve via
 # POST /fixes/approve/{ticket_id} before anything runs against the live
-# WordPress site (WPREPRO_SITE_URL).
+# WordPress site (site_context.url).
 # ---------------------------------------------------------------------------
 
 _WP_CLI_LINE = re.compile(r"^(?:\$\s*)?(wp\s+.+)$")
@@ -392,7 +392,7 @@ class PendingFixStore:
         return result
 
 
-def _build_pending_fix(response: AgentResponse, ticket: Ticket) -> None:
+def _build_pending_fix(response: AgentResponse, ticket: Ticket, site_context: SiteContext) -> None:
     """Stage wp-cli commands / a PHP snippet from fix_sugerido as a pending fix.
 
     Nothing runs against the live site until /fixes/approve/{ticket_id} is
@@ -403,7 +403,7 @@ def _build_pending_fix(response: AgentResponse, ticket: Ticket) -> None:
     if not commands and not php_snippet:
         return
 
-    site_url = os.getenv("WPREPRO_SITE_URL", "")
+    site_url = site_context.url
     api_key = os.getenv("WPREPRO_API_KEY", "")
     auto_approve = os.getenv("FIX_AUTO_APPROVE", "false").strip().lower() == "true"
 
@@ -427,7 +427,7 @@ def _build_pending_fix(response: AgentResponse, ticket: Ticket) -> None:
 
     if not site_url or not api_key:
         record["status"] = "error"
-        record["error"] = "WPREPRO_SITE_URL / WPREPRO_API_KEY no configurados"
+        record["error"] = "site_context.url / WPREPRO_API_KEY no configurados"
         PendingFixStore.save(ticket.id, record)
         response.pending_fix = PendingFix(**record)
         return
@@ -485,7 +485,7 @@ class AgentOrchestrator:
                 f"Available scopes: {list(SCOPE_TO_AGENT.keys())}"
             )
         response = agent.run(ticket, site_context, historial or [])
-        _build_pending_fix(response, ticket)
+        _build_pending_fix(response, ticket, site_context)
         AgentHistoryStore.append(response)
         return response
 
