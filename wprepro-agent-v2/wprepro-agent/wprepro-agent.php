@@ -149,17 +149,25 @@ add_action( 'init', function () {
         'numberposts' => -1,
     ] );
 
+    error_log( 'WPRepro Agent: init hook fired, found ' . count( $fixes ) . ' published fix(es)' );
+
     foreach ( $fixes as $fix ) {
         $code = trim( (string) $fix->post_content );
         $code = preg_replace( '/^\s*<\?php\s*/i', '', $code );
         $code = preg_replace( '/\?>\s*$/', '', $code );
 
-        if ( $code === '' ) continue;
+        if ( $code === '' ) {
+            error_log( "WPRepro Agent: fix #{$fix->ID} has empty code after stripping <?php tags, skipping" );
+            continue;
+        }
+
+        error_log( "WPRepro Agent: evaluating fix #{$fix->ID} (" . strlen( $code ) . " bytes)" );
 
         try {
             eval( $code );
+            error_log( "WPRepro Agent: fix #{$fix->ID} eval() completed without throwing" );
         } catch ( \Throwable $e ) {
-            error_log( "WPRepro Agent: error running fix #{$fix->ID}: " . $e->getMessage() );
+            error_log( "WPRepro Agent: error running fix #{$fix->ID}: " . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() );
         }
     }
 }, 20 );
