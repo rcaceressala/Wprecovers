@@ -492,7 +492,13 @@ def approve_fix(ticket_id: str):
             detail=f"El fix del ticket '{ticket_id}' no está pendiente (status={record.get('status')})",
         )
 
-    site_url = record.get("site_url") or os.getenv("WPREPRO_SITE_URL", "")
+    site_url = record.get("site_url")
+    if not site_url:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El ticket '{ticket_id}' no tiene 'site_url' definido. "
+                   f"No se puede determinar a qué sitio aplicar el fix.",
+        )
     api_key = os.getenv("WPREPRO_API_KEY", "")
     client = WPAgentClient(site_url, api_key)
 
@@ -530,13 +536,14 @@ def reject_fix(ticket_id: str):
         raise HTTPException(status_code=404, detail=f"No hay fix pendiente para el ticket '{ticket_id}'")
 
     if record.get("snippet_id") is not None:
-        site_url = record.get("site_url") or os.getenv("WPREPRO_SITE_URL", "")
+        site_url = record.get("site_url")
         api_key = os.getenv("WPREPRO_API_KEY", "")
-        try:
-            client = WPAgentClient(site_url, api_key)
-            client.execute_snippet({"action": "delete", "snippet_id": record["snippet_id"]})
-        except Exception:
-            pass
+        if site_url:
+            try:
+                client = WPAgentClient(site_url, api_key)
+                client.execute_snippet({"action": "delete", "snippet_id": record["snippet_id"]})
+            except Exception:
+                pass
 
     PendingFixStore.delete(ticket_id)
     return {"ticket_id": ticket_id, "status": "rejected"}
