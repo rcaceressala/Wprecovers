@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import Dict, Tuple
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -30,13 +32,23 @@ async def _fetch_psi(url: str) -> dict:
 
 async def _fetch_html(url: str) -> Tuple[str, dict, int]:
     """Returns (html_text, response_headers_lower, status_code)."""
+    # Cache-bust: append a unique query param so CDN/page-cache layers
+    # (Cloudflare, WP Rocket, etc.) don't serve a stale snapshot, and ask
+    # any intermediary not to cache either.
+    parts = urlsplit(url)
+    query = parse_qsl(parts.query)
+    query.append(("_cb", str(int(time.time() * 1000))))
+    bust_url = urlunsplit(parts._replace(query=urlencode(query)))
+
     headers = {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
         "Accept-Language": "es,en;q=0.9",
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        "Pragma": "no-cache",
     }
     async with httpx.AsyncClient(timeout=HTML_TIMEOUT, follow_redirects=True) as c:
-        r = await c.get(url, headers=headers)
+        r = await c.get(bust_url, headers=headers)
         return r.text, {k.lower(): v.lower() for k, v in r.headers.items()}, r.status_code
 
 # ---------------------------------------------------------------------------
