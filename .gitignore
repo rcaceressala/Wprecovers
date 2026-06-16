@@ -6,6 +6,10 @@ yarn-error.log*
 
 # API keys and credentials
 antropic_api_wprecover.txt
+credenciales.txt
+
+# Backups
+api/respaldo_*/
 
 # Environment variables
 .env
