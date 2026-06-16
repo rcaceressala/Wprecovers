@@ -687,6 +687,19 @@ def get_usage(client_id: str):
     return UsageTracker.get_with_limits(client_id)
 
 
+@app.post("/billing/admin/seed/{client_id}/{plan}", tags=["M8 Billing"])
+def seed_subscription(client_id: str, plan: str):
+    """
+    [DEV ONLY] Create an active mock subscription for a client without Stripe.
+    Use this to seed test clients before calling /billing/upgrade or /billing/usage.
+    """
+    try:
+        result = BillingService.seed_subscription(client_id, plan)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
 @app.post("/billing/upgrade/{client_id}", tags=["M8 Billing"])
 def upgrade_plan(client_id: str, req: UpgradeRequest):
     """

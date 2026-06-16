@@ -483,3 +483,27 @@ class BillingService:
             "mode": "live" if _is_stripe_configured() else "mock",
             "updated_at": sub.updated_at,
         }
+
+    @staticmethod
+    def seed_subscription(client_id: str, plan: str) -> Dict[str, Any]:
+        """Create a mock subscription directly — for dev/testing only."""
+        if plan not in PLANS:
+            raise ValueError(f"Unknown plan '{plan}'. Available: {list(PLANS.keys())}")
+        now = datetime.now(timezone.utc).isoformat()
+        sub = ClientSubscription(
+            client_id=client_id,
+            plan=plan,
+            stripe_customer_id=None,
+            stripe_subscription_id=None,
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+        SubscriptionStore.save(sub)
+        return {
+            "client_id": client_id,
+            "plan": plan,
+            "status": "active",
+            "mode": "seeded",
+            "created_at": now,
+        }
