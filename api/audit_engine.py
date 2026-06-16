@@ -327,9 +327,15 @@ async def run_full_audit(url: str) -> TicketResponse:
         estimacion_total_min=sum(t.estimacion for t in tickets),
     )
 
+    # PageSpeed performance score (0-100), used for SiteMetrics in /report endpoints
+    perf_score_raw = psi.get("lighthouseResult", {}).get("categories", {}).get("performance", {}).get("score")
+    pagespeed_score = round(float(perf_score_raw) * 100, 1) if perf_score_raw is not None else None
+
     return TicketResponse(
         url=url,
         recovery_score=audit.recovery_score,
         resumen=summary,
         tickets=tickets,
+        checks=checks,
+        pagespeed_score=pagespeed_score,
     )

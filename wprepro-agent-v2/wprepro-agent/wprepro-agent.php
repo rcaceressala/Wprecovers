@@ -3,7 +3,7 @@
  * Plugin Name: WPRepro Agent
  * Plugin URI:  https://wprecoverpro.com
  * Description: Agente remoto de WPRecover 2.0. Conecta con el backend FastAPI, recibe recomendaciones de los agentes IA y ejecuta fixes (sintaxis estilo WP-CLI mapeada a funciones nativas de WordPress, sin shell ni WP-CLI real) y snippets PHP aprobados.
- * Version:     2.4.0
+ * Version:     2.5.0
  * Author:      WPRecover Pro
  * License:     GPL-2.0+
  * Text Domain: wprepro-agent
@@ -11,7 +11,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'WPREPRO_VERSION', '2.4.0' );
+define( 'WPREPRO_VERSION', '2.5.0' );
 define( 'WPREPRO_API_NS',  'wprepro/v1' );
 
 // ── Settings ─────────────────────────────────────────────────────────────────

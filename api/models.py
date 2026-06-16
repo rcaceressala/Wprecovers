@@ -74,6 +74,15 @@ class TicketResponse(BaseModel):
     recovery_score: float
     resumen: TicketSummary
     tickets: List[Ticket]
+    checks: Optional[Dict[str, Dict[str, bool]]] = Field(
+        default=None,
+        description="Raw category -> check_name -> passed map from the audit. "
+                    "Used to build SiteMetrics for /report endpoints.",
+    )
+    pagespeed_score: Optional[float] = Field(
+        default=None,
+        description="PageSpeed Insights performance score (0-100), if available.",
+    )
 
 
 # ---------------------------------------------------------------------------

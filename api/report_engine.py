@@ -212,15 +212,28 @@ class ClientReport:
 
         delta = guarantee.improvement_points
         total_fixed = len(checks_fixed)
-        resumen = (
-            f"Mejoramos tu sitio web en {total_fixed} {'área' if total_fixed == 1 else 'áreas'} clave. "
-            f"Tu puntuación aumentó de {score_before:.0f} a {score_after:.0f} puntos "
-            f"({'+' if delta >= 0 else ''}{delta:.1f} pts, {guarantee.improvement_pct:+.1f}%). "
-        )
-        if guarantee.guarantee_met:
-            resumen += "✓ La garantía de mejora ha sido cumplida."
+        if score_before == score_after:
+            # Initial diagnostic report — no fixes applied yet.
+            n_issues = sum(
+                1 for cat_checks in req.baseline.checks.values()
+                for v in cat_checks.values() if not v
+            )
+            resumen = (
+                f"Diagnóstico inicial: tu sitio obtuvo un Recovery Score de {score_before:.0f}/100. "
+                f"Detectamos {n_issues} {'punto' if n_issues == 1 else 'puntos'} de mejora "
+                f"que, una vez corregidos, están cubiertos por nuestra garantía de "
+                f"al menos {cls.THRESHOLD:.0f} puntos de mejora."
+            )
         else:
-            resumen += f"Se requieren {cls.THRESHOLD - delta:.1f} pts adicionales para cumplir la garantía."
+            resumen = (
+                f"Mejoramos tu sitio web en {total_fixed} {'área' if total_fixed == 1 else 'áreas'} clave. "
+                f"Tu puntuación aumentó de {score_before:.0f} a {score_after:.0f} puntos "
+                f"({'+' if delta >= 0 else ''}{delta:.1f} pts, {guarantee.improvement_pct:+.1f}%). "
+            )
+            if guarantee.guarantee_met:
+                resumen += "✓ La garantía de mejora ha sido cumplida."
+            else:
+                resumen += f"Se requieren {cls.THRESHOLD - delta:.1f} pts adicionales para cumplir la garantía."
 
         return sections, chart, resumen
 
@@ -288,12 +301,18 @@ class BeforeAfterReport:
         story = []
 
         # ── Header ────────────────────────────────────────────────────────────
+        is_diagnostico = score_before == score_after
+        header_subtitle = (
+            "Reporte de Diagnóstico Inicial" if is_diagnostico
+            else "Reporte de Recuperación de Sitio Web"
+        )
         story.append(Paragraph(
             "<b>WPRecover</b>",
-            style("h1", fontSize=26, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER),
+            style("h1", fontSize=26, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER, leading=32),
         ))
+        story.append(Spacer(1, 4))
         story.append(Paragraph(
-            "Reporte de Recuperación de Sitio Web",
+            header_subtitle,
             style("sub", fontSize=13, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
         ))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor(cls._BLUE), spaceAfter=10))
@@ -321,12 +340,21 @@ class BeforeAfterReport:
         delta = guarantee.improvement_points
         delta_str = f"+{delta:.1f}" if delta >= 0 else f"{delta:.1f}"
         pct_str = f"{guarantee.improvement_pct:+.1f}%"
-        score_data = [
-            ["Recovery Score", "Antes", "Después", "Mejora", "% Mejora"],
-            ["Score General", f"{score_before:.1f}", f"{score_after:.1f}", delta_str, pct_str],
-        ]
+
+        if is_diagnostico:
+            score_data = [
+                ["Recovery Score", "Resultado"],
+                ["Score General", f"{score_before:.1f} / 100"],
+            ]
+            score_table = Table(score_data, colWidths=[8 * cm, 8 * cm])
+        else:
+            score_data = [
+                ["Recovery Score", "Antes", "Después", "Mejora", "% Mejora"],
+                ["Score General", f"{score_before:.1f}", f"{score_after:.1f}", delta_str, pct_str],
+            ]
+            score_table = Table(score_data, colWidths=[5.5 * cm, 2.5 * cm, 2.5 * cm, 2.5 * cm, 3 * cm])
+
         score_col_colors = colors.HexColor(cls._GREEN if delta >= 0 else cls._RED)
-        score_table = Table(score_data, colWidths=[5.5 * cm, 2.5 * cm, 2.5 * cm, 2.5 * cm, 3 * cm])
         score_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(cls._BLUE)),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -346,28 +374,44 @@ class BeforeAfterReport:
         story.append(Spacer(1, 10))
 
         # ── Guarantee badge ───────────────────────────────────────────────────
-        badge_color = cls._GREEN if guarantee.guarantee_met else cls._GRAY
-        badge_text = "GARANTIA CUMPLIDA" if guarantee.guarantee_met else "EN PROGRESO"
-        story.append(Paragraph(
-            f'<font color="{badge_color}"><b>[{badge_text}]</b></font>'
-            f'  Mejora de <b>{delta_str} pts</b> ({pct_str})'
-            f'  —  Umbral de garantia: {guarantee.threshold:.0f} pts',
-            style("badge", fontSize=11, spaceAfter=14),
-        ))
+        if is_diagnostico:
+            story.append(Paragraph(
+                f'<font color="{cls._BLUE}"><b>[DIAGNÓSTICO INICIAL]</b></font>'
+                f'  Score actual: <b>{score_before:.1f}/100</b>'
+                f'  —  Garantía de mejora: al menos {guarantee.threshold:.0f} pts tras intervención',
+                style("badge", fontSize=11, spaceAfter=14),
+            ))
+        else:
+            badge_color = cls._GREEN if guarantee.guarantee_met else cls._GRAY
+            badge_text = "GARANTIA CUMPLIDA" if guarantee.guarantee_met else "EN PROGRESO"
+            story.append(Paragraph(
+                f'<font color="{badge_color}"><b>[{badge_text}]</b></font>'
+                f'  Mejora de <b>{delta_str} pts</b> ({pct_str})'
+                f'  —  Umbral de garantia: {guarantee.threshold:.0f} pts',
+                style("badge", fontSize=11, spaceAfter=14),
+            ))
 
         # ── Per-category breakdown ────────────────────────────────────────────
         story.append(Paragraph(
             "<b>Desglose por Categoría</b>",
             style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceAfter=6),
         ))
-        cat_data = [["Categoría", "Peso", "Antes", "Después", "Delta"]]
-        for cat, weight in WEIGHTS.items():
-            sb = per_cat_before.get(cat, 0.0)
-            sa = per_cat_after.get(cat, 0.0)
-            d = sa - sb
-            cat_data.append([cat, f"{int(weight * 100)}%", f"{sb:.0f}", f"{sa:.0f}",
-                              f"+{d:.0f}" if d >= 0 else f"{d:.0f}"])
-        cat_table = Table(cat_data, colWidths=[5.5 * cm, 2 * cm, 2.5 * cm, 2.5 * cm, 3.5 * cm])
+        if is_diagnostico:
+            cat_data = [["Categoría", "Peso", "Score actual"]]
+            for cat, weight in WEIGHTS.items():
+                sb = per_cat_before.get(cat, 0.0)
+                cat_data.append([cat, f"{int(weight * 100)}%", f"{sb:.0f} / 100"])
+            cat_table = Table(cat_data, colWidths=[7 * cm, 3 * cm, 6 * cm])
+        else:
+            cat_data = [["Categoría", "Peso", "Antes", "Después", "Delta"]]
+            for cat, weight in WEIGHTS.items():
+                sb = per_cat_before.get(cat, 0.0)
+                sa = per_cat_after.get(cat, 0.0)
+                d = sa - sb
+                cat_data.append([cat, f"{int(weight * 100)}%", f"{sb:.0f}", f"{sa:.0f}",
+                                  f"+{d:.0f}" if d >= 0 else f"{d:.0f}"])
+            cat_table = Table(cat_data, colWidths=[5.5 * cm, 2 * cm, 2.5 * cm, 2.5 * cm, 3.5 * cm])
+
         cat_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(cls._BLUE)),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -382,8 +426,27 @@ class BeforeAfterReport:
         story.append(cat_table)
         story.append(Spacer(1, 14))
 
-        # ── Checks fixed ──────────────────────────────────────────────────────
-        if checks_fixed:
+
+        # ── Checks fixed / Issues found ──────────────────────────────────────────
+        if is_diagnostico:
+            failed_checks = [
+                CHECK_LABELS.get(name, name)
+                for cat_checks in req.baseline.checks.values()
+                for name, passed in cat_checks.items()
+                if not passed
+            ]
+            if failed_checks:
+                story.append(Paragraph(
+                    "<b>Puntos a Corregir</b>",
+                    style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceAfter=6),
+                ))
+                for label in failed_checks:
+                    story.append(Paragraph(
+                        f'<font color="{cls._RED}">✗</font>  {label}',
+                        style("issue", fontSize=11, leftIndent=8, spaceAfter=3),
+                    ))
+                story.append(Spacer(1, 12))
+        elif checks_fixed:
             story.append(Paragraph(
                 "<b>Correcciones Aplicadas</b>",
                 style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceAfter=6),

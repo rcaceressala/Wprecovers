@@ -392,6 +392,65 @@ def download_pdf(ticket_id: str):
     return FileResponse(str(pdf), media_type="application/pdf", filename=pdf.name)
 
 
+class DiagnosticoReportRequest(BaseModel):
+    client_name: str
+    site_url: str
+    client_logo_url: Optional[str] = None
+    notas: Optional[str] = None
+
+
+@app.post("/report/diagnostico/{ticket_id}", tags=["M5 Reports"])
+async def generate_diagnostico_report(ticket_id: str, req: DiagnosticoReportRequest):
+    """
+    Generate an initial diagnostic report for a NEW prospect — no QA baseline required.
+
+    Runs a fresh M1 audit on `site_url` and uses its result as BOTH `baseline`
+    and `post_fix` (improvement = 0, status = EN PROGRESO). This is the correct
+    report to send a prospect before any work has started — it shows the
+    Recovery Score and per-category breakdown found today, without the
+    "0.0 -> 0.0" bug that occurs when baseline/post_fix are sent empty.
+
+    Once real fixes are applied and validated via /qa/baseline + /qa/validate,
+    use POST /report/generate/{ticket_id} instead to show real before/after.
+    """
+    try:
+        audit_result = await run_full_audit(req.site_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audit failed: {e}")
+
+    if audit_result.checks is None:
+        raise HTTPException(status_code=500, detail="Audit did not return checks data")
+
+    metrics = SiteMetrics(
+        pagespeed_score=audit_result.pagespeed_score or 0.0,
+        recovery_score=audit_result.recovery_score,
+        checks=audit_result.checks,
+    )
+
+    report_req = ReportRequest(
+        client_name=req.client_name,
+        site_url=req.site_url,
+        client_logo_url=req.client_logo_url,
+        baseline=metrics,
+        post_fix=metrics,
+        tickets_completados=[],
+        notas=req.notas,
+    )
+
+    try:
+        record = build_full_report(ticket_id, report_req)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "ticket_id": ticket_id,
+        "recovery_score": record.score_before,
+        "per_category": record.per_category_before,
+        "pdf_available": record.pdf_path is not None,
+        "timestamp": record.timestamp,
+    }
+
+
 # ---------------------------------------------------------------------------
 # M6 — Agentes IA
 # ---------------------------------------------------------------------------

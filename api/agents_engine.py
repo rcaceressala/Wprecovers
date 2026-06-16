@@ -306,6 +306,29 @@ _PHP_FENCE = re.compile(r"```php\s*\n([\s\S]*?)```", re.IGNORECASE)
 _GENERIC_FENCE = re.compile(r"```(?:\w+)?\s*\n([\s\S]*?)```")
 _PHP_HINT = re.compile(r"add_action\(|add_filter\(|function\s+\w+\s*\(|<\?php|update_option\(|wp_enqueue")
 
+# Apache / .htaccess directives — never valid as eval()'d PHP.
+_HTACCESS_DIRECTIVE = re.compile(
+    r"^\s*(?:RewriteEngine|RewriteCond|RewriteRule|RewriteBase|<IfModule|</IfModule|"
+    r"Options|AddType|AddHandler|ExpiresActive|ExpiresByType|FileETag|"
+    r"Header\s+(?:set|always|append|unset|edit)|<Files|</Files|<FilesMatch|</FilesMatch|"
+    r"Order\s|Allow\s|Deny\s|Require\s|ErrorDocument)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Recognizable WordPress/PHP function calls expected in a real fix snippet.
+_PHP_FUNCTION_CALL = re.compile(
+    r"\b(?:add_action|add_filter|remove_action|remove_filter|do_action|apply_filters|"
+    r"update_option|add_option|delete_option|update_post_meta|get_post_meta|"
+    r"register_activation_hook|register_deactivation_hook|wp_enqueue_(?:script|style)|"
+    r"wp_redirect|wp_die)\s*\(|function\s+\w+\s*\("
+)
+
+_PHP_STRING_LITERAL = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+_HTML_TAG = re.compile(r"</?[a-zA-Z][\w-]*(?:\s[^<>]*)?>")
+_HTML_ENTITY = re.compile(r"&[a-zA-Z#]\w*;")
+# Spanish accents / ¿¡ outside of strings indicate prose, not PHP (identifiers are ASCII-only).
+_NON_PHP_PROSE = re.compile(r"[áéíóúñÁÉÍÓÚÑ¿¡]")
+
 
 def _extract_wp_cli_commands(fix_sugerido: Optional[str]) -> List[str]:
     """Pull standalone `wp ...` command lines out of fix_sugerido."""
@@ -326,6 +349,42 @@ def _strip_php_tags(code: str) -> str:
     return code.strip()
 
 
+def _is_safe_php_snippet(code: str) -> bool:
+    """Heuristic check: is `code` a standalone PHP snippet safe to stage as a
+    wprepro_fix and eval() on the live site?
+
+    Rejects prose, HTML markup, and Apache/.htaccess directives — content
+    that would throw a syntax error (or worse) when eval()'d as PHP.
+    """
+    if not code or not code.strip():
+        return False
+
+    if _HTACCESS_DIRECTIVE.search(code):
+        return False
+
+    # A leftover '<?php' / '?>' means the snippet mixes multiple PHP blocks
+    # or HTML — eval() expects pure PHP statements without tag delimiters.
+    if "<?php" in code.lower() or "?>" in code:
+        return False
+
+    skeleton = _PHP_STRING_LITERAL.sub("", code)
+
+    # HTML tags/entities outside of quoted strings indicate raw markup mixed
+    # into the snippet (e.g. echoed HTML without proper quoting).
+    if _HTML_TAG.search(skeleton) or _HTML_ENTITY.search(skeleton):
+        return False
+
+    # Spanish prose leaking into fix_sugerido (PHP identifiers are ASCII-only).
+    if _NON_PHP_PROSE.search(skeleton):
+        return False
+
+    # Must contain at least one recognizable WordPress/PHP function call.
+    if not _PHP_FUNCTION_CALL.search(code):
+        return False
+
+    return True
+
+
 def _extract_php_snippet(fix_sugerido: Optional[str]) -> Optional[str]:
     """Pull a PHP code snippet out of fix_sugerido, if present."""
     if not fix_sugerido:
@@ -343,7 +402,8 @@ def _extract_php_snippet(fix_sugerido: Optional[str]) -> Optional[str]:
         return _strip_php_tags(fix_sugerido[fix_sugerido.index("<?php"):])
 
     if _PHP_HINT.search(fix_sugerido) and not _extract_wp_cli_commands(fix_sugerido):
-        return _strip_php_tags(fix_sugerido)
+        code = _strip_php_tags(fix_sugerido)
+        return code if _is_safe_php_snippet(code) else None
 
     return None
 
@@ -400,6 +460,12 @@ def _build_pending_fix(response: AgentResponse, ticket: Ticket, site_context: Si
     """
     commands = _extract_wp_cli_commands(response.fix_sugerido)
     php_snippet = _extract_php_snippet(response.fix_sugerido)
+
+    # Final safety net before staging the snippet for eval() on the live site
+    # (covers snippets extracted from ```php fences, not just the fallback).
+    if php_snippet and not _is_safe_php_snippet(php_snippet):
+        php_snippet = None
+
     if not commands and not php_snippet:
         return
 
