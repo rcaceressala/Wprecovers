@@ -840,3 +840,15 @@ async def close_project(project_id: str):
     record.updated_at = datetime.now(timezone.utc).isoformat()
     ProjectStore.save(record)
     return record
+
+
+@app.delete("/projects/{project_id}", tags=["M9 Projects"])
+def delete_project(project_id: str):
+    """
+    Permanently delete a project record (removes its JSON file from disk).
+    """
+    record = ProjectStore.get(project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
+    ProjectStore.delete(project_id)
+    return {"id": project_id, "status": "deleted"}

@@ -55,6 +55,15 @@ class ProjectStore:
         return record
 
     @classmethod
+    def delete(cls, project_id: str) -> bool:
+        _projects.pop(project_id, None)
+        path = cls._path(project_id)
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    @classmethod
     def list_all(cls) -> List[ProjectRecord]:
         if not PROJECTS_DIR.exists():
             return []

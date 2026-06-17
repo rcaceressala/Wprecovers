@@ -9,7 +9,7 @@ import { RecoveryGauge } from '@/components/RecoveryGauge'
 import {
   api, DEMO_AUDIT, scoreColor,
   type TicketResponse, type Ticket, type Prioridad, type AuditInput,
-  type SiteMetrics, type ReportRequest,
+  type SiteMetrics, type ReportRequest, type ProjectSummary,
 } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
@@ -138,12 +138,48 @@ export default function DashboardPage() {
   const [modal,   setModal]   = useState(false)
   const [running, setRunning] = useState(false)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [activeProjectId, setActiveProjectId] = useState<string>('')
+  const [switchingProject, setSwitchingProject] = useState(false)
 
   useEffect(() => {
     const stored = localStorage.getItem('wpr_last_audit')
     if (stored) setData(JSON.parse(stored))
     setLoading(false)
+
+    api.listProjects().then(r => setProjects(r.projects)).catch(() => {})
+    const activeStored = localStorage.getItem('wpr_active_project')
+    if (activeStored) {
+      try { setActiveProjectId(JSON.parse(activeStored).project_id ?? '') } catch {}
+    }
   }, [])
+
+  async function handleSelectProject(projectId: string) {
+    setActiveProjectId(projectId)
+    if (!projectId) return
+    const project = projects.find(p => p.id === projectId)
+    if (!project) return
+
+    localStorage.setItem('wpr_active_project', JSON.stringify({
+      project_id: project.id,
+      client_name: project.client_name,
+      site_url: project.site_url,
+      plan: project.plan,
+    }))
+
+    setSwitchingProject(true)
+    setError(null)
+    try {
+      const result = await api.runAudit(project.site_url)
+      localStorage.setItem('wpr_last_audit', JSON.stringify(result))
+      window.dispatchEvent(new CustomEvent('wpr_audit_updated', { detail: result }))
+      setData(result)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al auditar el proyecto seleccionado')
+    } finally {
+      setSwitchingProject(false)
+    }
+  }
 
   async function handleRunAudit(url: string) {
     setRunning(true)
@@ -218,9 +254,22 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <select
+            className="select w-auto"
+            value={activeProjectId}
+            onChange={e => handleSelectProject(e.target.value)}
+            disabled={switchingProject}
+          >
+            <option value="">Sin proyecto activo</option>
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.client_name}</option>
+            ))}
+          </select>
           <button className="btn-primary flex items-center gap-2"
-            onClick={() => setModal(true)}>
-            <Play className="w-4 h-4" /> Run Audit
+            onClick={() => setModal(true)} disabled={switchingProject}>
+            {switchingProject
+              ? <><RefreshCw className="w-4 h-4 animate-spin" /> Auditando…</>
+              : <><Play className="w-4 h-4" /> Run Audit</>}
           </button>
         </div>
       </div>

@@ -197,6 +197,35 @@ export interface CheckoutResponse {
 }
 
 // ---------------------------------------------------------------------------
+// M9 — Projects
+// ---------------------------------------------------------------------------
+
+export type ProjectStatus = 'DRAFT' | 'OPEN' | 'CLOSED'
+
+export interface ProjectSummary {
+  id: string
+  client_name: string
+  site_url: string
+  plan: string
+  status: ProjectStatus
+  score_before: number | null
+  score_after: number | null
+  improvement_points: number | null
+  improvement_pct: number | null
+  guarantee_met: boolean | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectDetail extends ProjectSummary {
+  notas: string | null
+  checks_before: Record<string, Record<string, boolean>> | null
+  pagespeed_before: number | null
+}
+
+export type CloseProjectResult = ProjectDetail
+
+// ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
 
@@ -320,6 +349,28 @@ export const api = {
       `/billing/upgrade/${clientId}`,
       { method: 'POST', body: JSON.stringify({ new_plan: newPlan }) }
     ),
+
+  // M9 — Projects
+  listProjects: () =>
+    apiFetch<{ projects: ProjectSummary[] }>('/projects/'),
+
+  getProject: (projectId: string) =>
+    apiFetch<ProjectDetail>(`/projects/${projectId}`),
+
+  createProject: (req: { client_name: string; site_url: string; plan: string; notas?: string | null }) =>
+    apiFetch<ProjectDetail>('/projects/', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  captureBaseline: (projectId: string) =>
+    apiFetch<ProjectDetail>(`/projects/${projectId}/audit-and-baseline`, { method: 'POST' }),
+
+  closeProject: (projectId: string) =>
+    apiFetch<CloseProjectResult>(`/projects/${projectId}/close`, { method: 'POST' }),
+
+  deleteProject: (projectId: string) =>
+    apiFetch<{ id: string; status: string }>(`/projects/${projectId}`, { method: 'DELETE' }),
 }
 
 // ---------------------------------------------------------------------------

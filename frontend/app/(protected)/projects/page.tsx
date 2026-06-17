@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   Plus, X, RefreshCw, FolderKanban, ExternalLink,
-  CheckCircle2, XCircle, Download, ClipboardCheck, Lock,
+  CheckCircle2, XCircle, Download, ClipboardCheck, Lock, Trash2,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -323,10 +323,14 @@ function ProjectDetailModal({
 // ---------------------------------------------------------------------------
 // Project card
 // ---------------------------------------------------------------------------
-function ProjectCard({ project, onClick }: { project: Project; onClick: () => void }) {
+function ProjectCard({
+  project, onClick, onDelete,
+}: { project: Project; onClick: () => void; onDelete: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+
   return (
-    <button onClick={onClick}
-      className="card text-left hover:border-accent/50 transition-colors w-full">
+    <div onClick={onClick} role="button" tabIndex={0}
+      className="card text-left hover:border-accent/50 transition-colors w-full cursor-pointer">
       <div className="flex items-start justify-between mb-2">
         <p className="text-sm font-medium truncate">{project.client_name}</p>
         <span className="badge bg-s2 text-dim border border-border flex-shrink-0">
@@ -334,11 +338,33 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
         </span>
       </div>
       <p className="text-xs text-dim truncate mb-3">{project.site_url}</p>
-      <div className="flex items-center gap-2 flex-wrap">
-        <ImprovementBadge points={project.improvement_points} />
-        <GuaranteeBadge met={project.guarantee_met} />
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <ImprovementBadge points={project.improvement_points} />
+          <GuaranteeBadge met={project.guarantee_met} />
+        </div>
+        {confirming ? (
+          <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <span className="text-[11px] text-danger">¿Eliminar?</span>
+            <button className="text-[11px] text-danger font-semibold hover:underline"
+              onClick={onDelete}>
+              Sí
+            </button>
+            <button className="text-[11px] text-muted hover:underline"
+              onClick={() => setConfirming(false)}>
+              No
+            </button>
+          </div>
+        ) : (
+          <button
+            className="text-[11px] text-muted hover:text-danger flex items-center gap-1 flex-shrink-0"
+            onClick={e => { e.stopPropagation(); setConfirming(true) }}
+          >
+            <Trash2 className="w-3 h-3" /> Eliminar
+          </button>
+        )}
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -370,6 +396,16 @@ export default function ProjectsPage() {
   const handleUpdated = (p: Project) => {
     setProjects(prev => prev.map(x => x.id === p.id ? p : x))
     setSelected(p)
+  }
+  const handleDelete = async (id: string) => {
+    setError(null)
+    try {
+      await api.deleteProject(id)
+      setProjects(prev => prev.filter(p => p.id !== id))
+      if (selected?.id === id) setSelected(null)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al eliminar el proyecto')
+    }
   }
 
   const grouped = STATUS_ORDER.map(status => ({
@@ -427,7 +463,8 @@ export default function ProjectsPage() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   {items.map(p => (
-                    <ProjectCard key={p.id} project={p} onClick={() => setSelected(p)} />
+                    <ProjectCard key={p.id} project={p} onClick={() => setSelected(p)}
+                      onDelete={() => handleDelete(p.id)} />
                   ))}
                 </div>
               )}
