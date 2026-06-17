@@ -586,6 +586,8 @@ _PHP_FUNCTION_CALL = re.compile(
 )
 
 _PHP_STRING_LITERAL = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+_PHP_LINE_COMMENT_RE = re.compile(r"(?://|#)[^\n]*")
+_PHP_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _HTML_TAG = re.compile(r"</?[a-zA-Z][\w-]*(?:\s[^<>]*)?>")
 _HTML_ENTITY = re.compile(r"&[a-zA-Z#]\w*;")
 # Spanish accents / ¿¡ outside of strings indicate prose, not PHP (identifiers are ASCII-only).
@@ -630,9 +632,14 @@ def _is_safe_php_snippet(code: str) -> bool:
         return False
 
     skeleton = _PHP_STRING_LITERAL.sub("", code)
+    # Comments legitimately contain HTML tags ("// Inyecta un <h1> ...") and
+    # accented Spanish words ("único") — strip them before the two checks
+    # below so they don't get misread as markup/prose leaking into real code.
+    skeleton = _PHP_LINE_COMMENT_RE.sub("", skeleton)
+    skeleton = _PHP_BLOCK_COMMENT_RE.sub("", skeleton)
 
-    # HTML tags/entities outside of quoted strings indicate raw markup mixed
-    # into the snippet (e.g. echoed HTML without proper quoting).
+    # HTML tags/entities outside of quoted strings/comments indicate raw
+    # markup mixed into the snippet (e.g. echoed HTML without proper quoting).
     if _HTML_TAG.search(skeleton) or _HTML_ENTITY.search(skeleton):
         return False
 
