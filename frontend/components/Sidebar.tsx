@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import {
-  LayoutDashboard, Ticket, ShieldCheck, Bot, CreditCard,
+  LayoutDashboard, FolderOpen, Ticket, ShieldCheck, Bot, CreditCard,
   Menu, X, Zap, LogOut,
 } from 'lucide-react'
 import { RecoveryGauge } from './RecoveryGauge'
@@ -12,6 +12,7 @@ import { logout } from '@/lib/auth'
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/projects',  icon: FolderOpen,      label: 'Proyectos' },
   { href: '/tickets',   icon: Ticket,          label: 'Tickets'   },
   { href: '/qa',        icon: ShieldCheck,      label: 'QA'        },
   { href: '/agents',    icon: Bot,              label: 'Agentes IA'},
