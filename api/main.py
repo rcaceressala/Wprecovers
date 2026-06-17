@@ -44,6 +44,7 @@ class AuditRunRequest(BaseModel):
 from agents_engine import AgentHistoryStore, AgentOrchestrator, PendingFixStore, SCOPE_TO_AGENT
 from audit_engine import run_full_audit, verify_url
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
+from db import init_db
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
 from project_engine import ProjectStore, resolve_api_key
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
@@ -67,6 +68,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+init_db()
 
 
 # ---------------------------------------------------------------------------
