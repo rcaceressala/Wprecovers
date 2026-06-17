@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, X, RefreshCw, FolderKanban, ExternalLink,
-  CheckCircle2, XCircle, Download, ClipboardCheck, Lock, Trash2,
+  CheckCircle2, Circle, XCircle, Download, ClipboardCheck, Lock, Trash2,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -100,12 +100,12 @@ function GuaranteeBadge({ met }: { met: boolean | null | undefined }) {
 // Modal shell
 // ---------------------------------------------------------------------------
 function ModalShell({
-  title, onClose, children,
-}: { title: string; onClose: () => void; children: React.ReactNode }) {
+  title, onClose, children, wide,
+}: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
          onClick={onClose}>
-      <div className="card w-full max-w-lg max-h-[85vh] overflow-y-auto"
+      <div className={`card w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[85vh] overflow-y-auto`}
            onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">{title}</h2>
@@ -120,17 +120,195 @@ function ModalShell({
 }
 
 // ---------------------------------------------------------------------------
-// Create project modal
+// Onboarding checklist — data
+// ---------------------------------------------------------------------------
+type ProjectType = 'wordpress' | 'woocommerce'
+type ChecklistItem = { key: string; label: string; critical?: boolean }
+type ChecklistSection = { id: string; title: string; items: ChecklistItem[] }
+
+const ENTORNO_LOCAL: ChecklistSection = {
+  id: 'entorno_local',
+  title: 'Entorno Local',
+  items: [
+    { key: 'php81', label: 'PHP ≥ 8.1 instalado' },
+    { key: 'wpcli', label: 'WP-CLI instalado' },
+    { key: 'git', label: 'Git inicializado' },
+    { key: 'env_creado', label: '.env creado y sin valores de otro proyecto' },
+    { key: 'env_gitignore', label: '.env en .gitignore', critical: true },
+  ],
+}
+
+const WORDPRESS_DB: ChecklistSection = {
+  id: 'wordpress_db',
+  title: 'WordPress y Base de Datos',
+  items: [
+    { key: 'wp_limpio', label: 'WordPress instalado limpio' },
+    { key: 'db_nueva', label: 'Base de datos nueva y exclusiva para este proyecto', critical: true },
+    { key: 'prefijo', label: 'Prefijo de tabla personalizado (no wp_)' },
+    { key: 'debug_false', label: 'WP_DEBUG en false', critical: true },
+    { key: 'url_correcta', label: 'URL del sitio correcta (siteurl / home)' },
+    { key: 'locale_tz', label: 'Idioma y zona horaria configurados' },
+    { key: 'admin_custom', label: 'Usuario admin personalizado (no "admin")' },
+    { key: 'salt_keys', label: 'Salt keys únicos generados', critical: true },
+  ],
+}
+
+const PLUGINS: ChecklistSection = {
+  id: 'plugins',
+  title: 'Plugins',
+  items: [
+    { key: 'default_eliminados', label: 'Plugins default eliminados (Hello Dolly, etc.)' },
+    { key: 'seguridad', label: 'Plugin de seguridad instalado', critical: true },
+    { key: 'cache', label: 'Plugin de caché instalado' },
+    { key: 'backup', label: 'Plugin de backup con destino externo', critical: true },
+    { key: 'seo', label: 'Plugin de SEO instalado' },
+  ],
+}
+
+const WOOCOMMERCE: ChecklistSection = {
+  id: 'woocommerce',
+  title: 'WooCommerce',
+  items: [
+    { key: 'woo_configurado', label: 'WooCommerce configurado' },
+    { key: 'gateway_test', label: 'Gateway de pago en modo test', critical: true },
+    { key: 'ssl_checkout', label: 'SSL forzado en checkout', critical: true },
+    { key: 'paginas_woo', label: 'Páginas de WooCommerce creadas' },
+    { key: 'emails', label: 'Emails configurados' },
+    { key: 'iva', label: 'IVA 19% configurado' },
+  ],
+}
+
+const SEGURIDAD: ChecklistSection = {
+  id: 'seguridad',
+  title: 'Seguridad',
+  items: [
+    { key: 'https_activo', label: 'HTTPS activo', critical: true },
+    { key: 'https_redirect', label: 'Redirección HTTP → HTTPS', critical: true },
+    { key: 'xmlrpc', label: 'xmlrpc.php deshabilitado' },
+    { key: 'wp_login', label: 'wp-login protegido' },
+    { key: 'readme', label: 'readme.html bloqueado' },
+    { key: 'headers_seguridad', label: 'Headers de seguridad configurados' },
+    { key: 'permisos', label: 'Permisos correctos (755 / 644)' },
+  ],
+}
+
+const CREDENCIALES: ChecklistSection = {
+  id: 'credenciales',
+  title: 'Credenciales y Accesos',
+  items: [
+    { key: 'password_manager', label: 'Credenciales en gestor de contraseñas', critical: true },
+    { key: 'acceso_hosting', label: 'Acceso hosting confirmado', critical: true },
+    { key: 'acceso_ftp', label: 'Acceso FTP/SFTP probado' },
+    { key: 'acceso_dns', label: 'Acceso DNS confirmado' },
+    { key: 'admin_email', label: 'Email de admin WP verificado' },
+    { key: 'accesos_documentados', label: 'Accesos documentados' },
+  ],
+}
+
+const ANTES_DE_EMPEZAR: ChecklistSection = {
+  id: 'antes_de_empezar',
+  title: 'Antes de Empezar',
+  items: [
+    { key: 'backup_inicial', label: 'Backup inicial tomado', critical: true },
+    { key: 'staging', label: 'Entorno staging separado de producción' },
+    { key: 'requerimientos', label: 'Requerimientos documentados' },
+    { key: 'cliente_aprobo', label: 'Cliente aprobó el plan', critical: true },
+    { key: 'ticket_creado', label: 'Ticket creado en gestor de proyectos' },
+  ],
+}
+
+// Orden: Entorno → WP/BD → Plugins → (WooCommerce si aplica) → Seguridad → Credenciales → Antes de empezar
+const ALL_SECTIONS: ChecklistSection[] = [
+  ENTORNO_LOCAL, WORDPRESS_DB, PLUGINS, WOOCOMMERCE, SEGURIDAD, CREDENCIALES, ANTES_DE_EMPEZAR,
+]
+
+function buildDefaultChecks(): Record<string, Record<string, boolean>> {
+  const obj: Record<string, Record<string, boolean>> = {}
+  ALL_SECTIONS.forEach(s => {
+    obj[s.id] = {}
+    s.items.forEach(it => { obj[s.id][it.key] = false })
+  })
+  return obj
+}
+
+function SectionCard({
+  section, checks, onToggle,
+}: {
+  section: ChecklistSection
+  checks: Record<string, boolean>
+  onToggle: (key: string) => void
+}) {
+  const done  = section.items.filter(it => checks[it.key]).length
+  const total = section.items.length
+
+  return (
+    <div className="bg-s2 border border-border rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-medium text-dim">{section.title}</h3>
+        <span className={done === total ? 'badge-done' : 'badge-open'}>{done} / {total}</span>
+      </div>
+      <div className="space-y-0.5">
+        {section.items.map(it => {
+          const checked = !!checks[it.key]
+          return (
+            <button
+              key={it.key}
+              type="button"
+              onClick={() => onToggle(it.key)}
+              className={[
+                'w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-xs text-left transition-colors',
+                checked ? 'bg-success/5' : 'hover:bg-surface',
+              ].join(' ')}
+            >
+              {checked
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0" />
+                : <Circle className="w-3.5 h-3.5 text-muted flex-shrink-0" />}
+              <span className={checked ? 'text-dim line-through' : ''}>{it.label}</span>
+              {it.critical && !checked && (
+                <span className="ml-auto text-[9px] font-mono uppercase tracking-wide text-warn flex-shrink-0">
+                  crítico
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Create project modal (con checklist de onboarding integrado)
 // ---------------------------------------------------------------------------
 function CreateProjectModal({
   onClose, onCreated,
 }: { onClose: () => void; onCreated: (p: Project) => void }) {
-  const [clientName, setClientName] = useState('')
-  const [siteUrl,    setSiteUrl]    = useState('')
-  const [plan,       setPlan]       = useState<PlanId>('starter')
-  const [notas,      setNotas]      = useState('')
-  const [saving,     setSaving]     = useState(false)
-  const [error,      setError]      = useState<string | null>(null)
+  const [clientName,  setClientName]  = useState('')
+  const [siteUrl,      setSiteUrl]      = useState('')
+  const [projectType,  setProjectType]  = useState<ProjectType>('wordpress')
+  const [plan,         setPlan]         = useState<PlanId>('starter')
+  const [notas,        setNotas]        = useState('')
+  const [checks,       setChecks]       = useState(buildDefaultChecks)
+  const [saving,       setSaving]       = useState(false)
+  const [error,        setError]        = useState<string | null>(null)
+
+  const visibleSections = useMemo(
+    () => ALL_SECTIONS.filter(s => s.id !== 'woocommerce' || projectType === 'woocommerce'),
+    [projectType]
+  )
+
+  const { done, total, percent } = useMemo(() => {
+    let d = 0, t = 0
+    visibleSections.forEach(s => s.items.forEach(it => {
+      t++
+      if (checks[s.id]?.[it.key]) d++
+    }))
+    return { done: d, total: t, percent: t === 0 ? 0 : Math.round((d / t) * 100) }
+  }, [visibleSections, checks])
+
+  function toggleItem(sectionId: string, key: string) {
+    setChecks(prev => ({ ...prev, [sectionId]: { ...prev[sectionId], [key]: !prev[sectionId][key] } }))
+  }
 
   const submit = async () => {
     if (!clientName.trim() || !siteUrl.trim()) {
@@ -159,41 +337,104 @@ function CreateProjectModal({
   }
 
   return (
-    <ModalShell title="Nuevo Proyecto" onClose={onClose}>
+    <ModalShell title="Nuevo Proyecto" onClose={onClose} wide>
       <div className="space-y-4">
+        {/* Progreso del checklist */}
         <div>
-          <label className="text-xs text-muted block mb-1">Cliente</label>
-          <input className="input" placeholder="Nombre del cliente"
-            value={clientName} onChange={e => setClientName(e.target.value)} autoFocus />
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs text-muted font-mono uppercase tracking-wide">Checklist de onboarding</span>
+            <span
+              className="text-xs font-mono font-semibold"
+              style={{ color: percent === 100 ? '#22c97a' : '#4f7fff' }}
+            >
+              {done} / {total} · {percent}%
+            </span>
+          </div>
+          <div className="h-2 bg-s2 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{ width: `${percent}%`, background: percent === 100 ? '#22c97a' : '#4f7fff' }}
+            />
+          </div>
         </div>
-        <div>
-          <label className="text-xs text-muted block mb-1">URL del sitio</label>
-          <input className="input" placeholder="https://ejemplo.com"
-            value={siteUrl} onChange={e => setSiteUrl(e.target.value)} />
+
+        {percent === 100 && (
+          <div className="flex items-center gap-2 bg-success/10 border border-success/30 text-success
+                          text-xs font-medium rounded-lg px-3 py-2">
+            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> ✔ Listo para empezar
+          </div>
+        )}
+
+        {/* Datos del proyecto */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-muted block mb-1">Cliente</label>
+            <input className="input" placeholder="Nombre del cliente"
+              value={clientName} onChange={e => setClientName(e.target.value)} autoFocus />
+          </div>
+          <div>
+            <label className="text-xs text-muted block mb-1">URL del sitio</label>
+            <input className="input" placeholder="https://ejemplo.com"
+              value={siteUrl} onChange={e => setSiteUrl(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-muted block mb-1">Tipo de proyecto</label>
+            <select className="select" value={projectType}
+              onChange={e => setProjectType(e.target.value as ProjectType)}>
+              <option value="wordpress">WordPress</option>
+              <option value="woocommerce">WordPress + WooCommerce</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-muted block mb-1">Plan</label>
+            <select className="select" value={plan} onChange={e => setPlan(e.target.value as PlanId)}>
+              {(Object.keys(PLAN_LABELS) as PlanId[]).map(p => (
+                <option key={p} value={p}>{PLAN_LABELS[p]}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-xs text-muted block mb-1">Notas</label>
+            <textarea className="input min-h-[60px] resize-none" placeholder="Notas internas (opcional)"
+              value={notas} onChange={e => setNotas(e.target.value)} />
+          </div>
         </div>
-        <div>
-          <label className="text-xs text-muted block mb-1">Plan</label>
-          <select className="select" value={plan} onChange={e => setPlan(e.target.value as PlanId)}>
-            {(Object.keys(PLAN_LABELS) as PlanId[]).map(p => (
-              <option key={p} value={p}>{PLAN_LABELS[p]}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs text-muted block mb-1">Notas</label>
-          <textarea className="input min-h-[80px] resize-none" placeholder="Notas internas (opcional)"
-            value={notas} onChange={e => setNotas(e.target.value)} />
+
+        {/* Secciones del checklist */}
+        <div className="space-y-3">
+          {visibleSections.map(s => (
+            <SectionCard
+              key={s.id}
+              section={s}
+              checks={checks[s.id] ?? {}}
+              onToggle={key => toggleItem(s.id, key)}
+            />
+          ))}
         </div>
 
         {error && (
           <p className="text-xs text-danger">{error}</p>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <button className="btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
-          <button className="btn-primary" onClick={submit} disabled={saving}>
-            {saving ? 'Creando…' : 'Crear Proyecto'}
+        <div className="flex items-center justify-between pt-2 border-t border-border">
+          <button
+            type="button"
+            className="text-xs text-muted hover:text-[#e2e8f0] hover:underline disabled:opacity-50"
+            onClick={submit}
+            disabled={saving}
+          >
+            Saltar checklist y crear proyecto
           </button>
+          <div className="flex gap-2">
+            <button className="btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+            {percent === 100 && (
+              <button className="btn-primary flex items-center gap-2" onClick={submit} disabled={saving}>
+                {saving
+                  ? 'Creando…'
+                  : <><CheckCircle2 className="w-4 h-4" /> Crear Proyecto</>}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </ModalShell>
