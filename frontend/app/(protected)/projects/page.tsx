@@ -131,105 +131,30 @@ function ModalShell({
 // ---------------------------------------------------------------------------
 // Onboarding checklist — data
 // ---------------------------------------------------------------------------
-type ProjectType = 'wordpress' | 'woocommerce'
 type ChecklistItem = { key: string; label: string; critical?: boolean }
 type ChecklistSection = { id: string; title: string; items: ChecklistItem[] }
 
-const ENTORNO_LOCAL: ChecklistSection = {
-  id: 'entorno_local',
-  title: 'Entorno Local',
+const ACCESOS_CLIENTE: ChecklistSection = {
+  id: 'accesos_cliente',
+  title: 'Accesos del Cliente',
   items: [
-    { key: 'php81', label: 'PHP ≥ 8.1 instalado' },
-    { key: 'wpcli', label: 'WP-CLI instalado' },
-    { key: 'git', label: 'Git inicializado' },
-    { key: 'env_creado', label: '.env creado y sin valores de otro proyecto' },
-    { key: 'env_gitignore', label: '.env en .gitignore', critical: true },
+    { key: 'acceso_hosting', label: 'Acceso al hosting confirmado', critical: true },
+    { key: 'password_manager', label: 'Credenciales guardadas en gestor de contraseñas', critical: true },
+    { key: 'cliente_aprobo', label: 'Cliente aprobó el plan de trabajo', critical: true },
   ],
 }
 
-const WORDPRESS_DB: ChecklistSection = {
-  id: 'wordpress_db',
-  title: 'WordPress y Base de Datos',
+const WORDPRESS_SECTION: ChecklistSection = {
+  id: 'wordpress',
+  title: 'WordPress',
   items: [
-    { key: 'wp_limpio', label: 'WordPress instalado limpio' },
-    { key: 'db_nueva', label: 'Base de datos nueva y exclusiva para este proyecto', critical: true },
-    { key: 'prefijo', label: 'Prefijo de tabla personalizado (no wp_)' },
-    { key: 'debug_false', label: 'WP_DEBUG en false', critical: true },
-    { key: 'url_correcta', label: 'URL del sitio correcta (siteurl / home)' },
-    { key: 'locale_tz', label: 'Idioma y zona horaria configurados' },
-    { key: 'admin_custom', label: 'Usuario admin personalizado (no "admin")' },
-    { key: 'salt_keys', label: 'Salt keys únicos generados', critical: true },
-  ],
-}
-
-const PLUGINS: ChecklistSection = {
-  id: 'plugins',
-  title: 'Plugins',
-  items: [
-    { key: 'default_eliminados', label: 'Plugins default eliminados (Hello Dolly, etc.)' },
-    { key: 'seguridad', label: 'Plugin de seguridad instalado', critical: true },
-    { key: 'cache', label: 'Plugin de caché instalado' },
-    { key: 'backup', label: 'Plugin de backup con destino externo', critical: true },
-    { key: 'seo', label: 'Plugin de SEO instalado' },
-  ],
-}
-
-const WOOCOMMERCE: ChecklistSection = {
-  id: 'woocommerce',
-  title: 'WooCommerce',
-  items: [
-    { key: 'woo_configurado', label: 'WooCommerce configurado' },
-    { key: 'gateway_test', label: 'Gateway de pago en modo test', critical: true },
-    { key: 'ssl_checkout', label: 'SSL forzado en checkout', critical: true },
-    { key: 'paginas_woo', label: 'Páginas de WooCommerce creadas' },
-    { key: 'emails', label: 'Emails configurados' },
-    { key: 'iva', label: 'IVA 19% configurado' },
-  ],
-}
-
-const SEGURIDAD: ChecklistSection = {
-  id: 'seguridad',
-  title: 'Seguridad',
-  items: [
-    { key: 'https_activo', label: 'HTTPS activo', critical: true },
-    { key: 'https_redirect', label: 'Redirección HTTP → HTTPS', critical: true },
-    { key: 'xmlrpc', label: 'xmlrpc.php deshabilitado' },
-    { key: 'wp_login', label: 'wp-login protegido' },
-    { key: 'readme', label: 'readme.html bloqueado' },
-    { key: 'headers_seguridad', label: 'Headers de seguridad configurados' },
-    { key: 'permisos', label: 'Permisos correctos (755 / 644)' },
-  ],
-}
-
-const CREDENCIALES: ChecklistSection = {
-  id: 'credenciales',
-  title: 'Credenciales y Accesos',
-  items: [
-    { key: 'password_manager', label: 'Credenciales en gestor de contraseñas', critical: true },
-    { key: 'acceso_hosting', label: 'Acceso hosting confirmado', critical: true },
-    { key: 'acceso_ftp', label: 'Acceso FTP/SFTP probado' },
-    { key: 'acceso_dns', label: 'Acceso DNS confirmado' },
-    { key: 'admin_email', label: 'Email de admin WP verificado' },
-    { key: 'accesos_documentados', label: 'Accesos documentados' },
-  ],
-}
-
-const ANTES_DE_EMPEZAR: ChecklistSection = {
-  id: 'antes_de_empezar',
-  title: 'Antes de Empezar',
-  items: [
+    { key: 'wprepro_agent', label: 'Plugin WPRepro Agent instalado y activo', critical: true },
+    { key: 'wp_config_revisado', label: 'wp-config.php revisado con el cliente' },
     { key: 'backup_inicial', label: 'Backup inicial tomado', critical: true },
-    { key: 'staging', label: 'Entorno staging separado de producción' },
-    { key: 'requerimientos', label: 'Requerimientos documentados' },
-    { key: 'cliente_aprobo', label: 'Cliente aprobó el plan', critical: true },
-    { key: 'ticket_creado', label: 'Ticket creado en gestor de proyectos' },
   ],
 }
 
-// Orden: Entorno → WP/BD → Plugins → (WooCommerce si aplica) → Seguridad → Credenciales → Antes de empezar
-const ALL_SECTIONS: ChecklistSection[] = [
-  ENTORNO_LOCAL, WORDPRESS_DB, PLUGINS, WOOCOMMERCE, SEGURIDAD, CREDENCIALES, ANTES_DE_EMPEZAR,
-]
+const ALL_SECTIONS: ChecklistSection[] = [ACCESOS_CLIENTE, WORDPRESS_SECTION]
 
 function buildDefaultChecks(): Record<string, Record<string, boolean>> {
   const obj: Record<string, Record<string, boolean>> = {}
@@ -294,7 +219,6 @@ function CreateProjectModal({
 }: { onClose: () => void; onCreated: (p: Project) => void }) {
   const [clientName,  setClientName]  = useState('')
   const [siteUrl,      setSiteUrl]      = useState('')
-  const [projectType,  setProjectType]  = useState<ProjectType>('wordpress')
   const [plan,         setPlan]         = useState<PlanId>('starter')
   const [notas,        setNotas]        = useState('')
   const [checks,       setChecks]       = useState(buildDefaultChecks)
@@ -304,19 +228,14 @@ function CreateProjectModal({
   const [verifyResult, setVerifyResult] = useState<VerifyUrlResult | null>(null)
   const [verifyError,  setVerifyError]  = useState<string | null>(null)
 
-  const visibleSections = useMemo(
-    () => ALL_SECTIONS.filter(s => s.id !== 'woocommerce' || projectType === 'woocommerce'),
-    [projectType]
-  )
-
   const { done, total, percent } = useMemo(() => {
     let d = 0, t = 0
-    visibleSections.forEach(s => s.items.forEach(it => {
+    ALL_SECTIONS.forEach(s => s.items.forEach(it => {
       t++
       if (checks[s.id]?.[it.key]) d++
     }))
     return { done: d, total: t, percent: t === 0 ? 0 : Math.round((d / t) * 100) }
-  }, [visibleSections, checks])
+  }, [checks])
 
   function toggleItem(sectionId: string, key: string) {
     setChecks(prev => ({ ...prev, [sectionId]: { ...prev[sectionId], [key]: !prev[sectionId][key] } }))
@@ -332,20 +251,6 @@ function CreateProjectModal({
         body: JSON.stringify({ url: siteUrl.trim() }),
       })
       setVerifyResult(result)
-      setChecks(prev => ({
-        ...prev,
-        seguridad: {
-          ...prev.seguridad,
-          https_activo: result.https_active,
-          https_redirect: result.http_to_https_redirect,
-          xmlrpc: result.xmlrpc_disabled,
-          readme: !result.readme_exposed,
-        },
-        wordpress_db: {
-          ...prev.wordpress_db,
-          wp_limpio: result.wordpress_detected,
-        },
-      }))
     } catch (e: unknown) {
       setVerifyError(e instanceof Error ? e.message : 'Error al verificar la URL')
     } finally {
@@ -455,14 +360,6 @@ function CreateProjectModal({
             {verifyError && <p className="text-xs text-danger mt-1.5">{verifyError}</p>}
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">Tipo de proyecto</label>
-            <select className="select" value={projectType}
-              onChange={e => setProjectType(e.target.value as ProjectType)}>
-              <option value="wordpress">WordPress</option>
-              <option value="woocommerce">WordPress + WooCommerce</option>
-            </select>
-          </div>
-          <div>
             <label className="text-xs text-muted block mb-1">Plan</label>
             <select className="select" value={plan} onChange={e => setPlan(e.target.value as PlanId)}>
               {(Object.keys(PLAN_LABELS) as PlanId[]).map(p => (
@@ -479,7 +376,7 @@ function CreateProjectModal({
 
         {/* Secciones del checklist */}
         <div className="space-y-3">
-          {visibleSections.map(s => (
+          {ALL_SECTIONS.map(s => (
             <SectionCard
               key={s.id}
               section={s}
