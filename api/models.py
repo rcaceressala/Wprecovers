@@ -381,3 +381,16 @@ class ProjectRecord(BaseModel):
     pagespeed_before: Optional[float] = None
     created_at: str
     updated_at: str
+
+
+class VerifyUrlRequest(BaseModel):
+    url: str
+
+
+class VerifyUrlResult(BaseModel):
+    https_active: bool
+    http_to_https_redirect: bool
+    xmlrpc_disabled: bool
+    readme_exposed: bool
+    wordpress_detected: bool
+    wp_version: Optional[str] = None

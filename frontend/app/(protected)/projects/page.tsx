@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Plus, X, RefreshCw, FolderKanban, ExternalLink,
+  Plus, X, RefreshCw, FolderKanban, ExternalLink, Wand2,
   CheckCircle2, Circle, XCircle, Download, ClipboardCheck, Lock, Trash2,
 } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -27,6 +27,15 @@ interface Project {
   improvement_points?: number | null
   guarantee_met?: boolean | null
   created_at?: string
+}
+
+interface VerifyUrlResult {
+  https_active: boolean
+  http_to_https_redirect: boolean
+  xmlrpc_disabled: boolean
+  readme_exposed: boolean
+  wordpress_detected: boolean
+  wp_version: string | null
 }
 
 const STATUS_ORDER: ProjectStatus[] = ['DRAFT', 'OPEN', 'CLOSED']
@@ -291,6 +300,9 @@ function CreateProjectModal({
   const [checks,       setChecks]       = useState(buildDefaultChecks)
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState<string | null>(null)
+  const [verifying,    setVerifying]    = useState(false)
+  const [verifyResult, setVerifyResult] = useState<VerifyUrlResult | null>(null)
+  const [verifyError,  setVerifyError]  = useState<string | null>(null)
 
   const visibleSections = useMemo(
     () => ALL_SECTIONS.filter(s => s.id !== 'woocommerce' || projectType === 'woocommerce'),
@@ -308,6 +320,37 @@ function CreateProjectModal({
 
   function toggleItem(sectionId: string, key: string) {
     setChecks(prev => ({ ...prev, [sectionId]: { ...prev[sectionId], [key]: !prev[sectionId][key] } }))
+  }
+
+  const handleVerify = async () => {
+    if (!siteUrl.trim()) return
+    setVerifying(true)
+    setVerifyError(null)
+    try {
+      const result = await apiFetch<VerifyUrlResult>('/projects/verify-url', {
+        method: 'POST',
+        body: JSON.stringify({ url: siteUrl.trim() }),
+      })
+      setVerifyResult(result)
+      setChecks(prev => ({
+        ...prev,
+        seguridad: {
+          ...prev.seguridad,
+          https_activo: result.https_active,
+          https_redirect: result.http_to_https_redirect,
+          xmlrpc: result.xmlrpc_disabled,
+          readme: !result.readme_exposed,
+        },
+        wordpress_db: {
+          ...prev.wordpress_db,
+          wp_limpio: result.wordpress_detected,
+        },
+      }))
+    } catch (e: unknown) {
+      setVerifyError(e instanceof Error ? e.message : 'Error al verificar la URL')
+    } finally {
+      setVerifying(false)
+    }
   }
 
   const submit = async () => {
@@ -376,6 +419,40 @@ function CreateProjectModal({
             <label className="text-xs text-muted block mb-1">URL del sitio</label>
             <input className="input" placeholder="https://ejemplo.com"
               value={siteUrl} onChange={e => setSiteUrl(e.target.value)} />
+            {siteUrl.trim() && (
+              <button
+                type="button"
+                className="mt-1.5 text-xs flex items-center gap-1.5 text-accent hover:underline disabled:opacity-50"
+                onClick={handleVerify}
+                disabled={verifying}
+              >
+                {verifying
+                  ? <><RefreshCw className="w-3 h-3 animate-spin" /> Verificando…</>
+                  : <><Wand2 className="w-3 h-3" /> Verificar automáticamente</>}
+              </button>
+            )}
+            {verifyResult && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <span className={verifyResult.https_active ? 'badge-done' : 'badge-fail'}>
+                  HTTPS {verifyResult.https_active ? 'activo' : 'inactivo'}
+                </span>
+                <span className={verifyResult.http_to_https_redirect ? 'badge-done' : 'badge-fail'}>
+                  Redirect {verifyResult.http_to_https_redirect ? 'OK' : 'falta'}
+                </span>
+                <span className={verifyResult.xmlrpc_disabled ? 'badge-done' : 'badge-fail'}>
+                  xmlrpc {verifyResult.xmlrpc_disabled ? 'OK' : 'expuesto'}
+                </span>
+                <span className={!verifyResult.readme_exposed ? 'badge-done' : 'badge-fail'}>
+                  readme {verifyResult.readme_exposed ? 'expuesto' : 'OK'}
+                </span>
+                {verifyResult.wordpress_detected && (
+                  <span className="badge bg-accent/10 text-accent border border-accent/20">
+                    WP {verifyResult.wp_version ?? 'detectado'}
+                  </span>
+                )}
+              </div>
+            )}
+            {verifyError && <p className="text-xs text-danger mt-1.5">{verifyError}</p>}
           </div>
           <div>
             <label className="text-xs text-muted block mb-1">Tipo de proyecto</label>

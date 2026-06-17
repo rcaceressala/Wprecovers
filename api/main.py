@@ -32,13 +32,15 @@ from models import (
     TicketSummary,
     UpgradeRequest,
     ValidateInput,
+    VerifyUrlRequest,
+    VerifyUrlResult,
 )
 
 
 class AuditRunRequest(BaseModel):
     url: str
 from agents_engine import AgentHistoryStore, AgentOrchestrator, PendingFixStore, SCOPE_TO_AGENT
-from audit_engine import run_full_audit
+from audit_engine import run_full_audit, verify_url
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
 from project_engine import ProjectStore
@@ -722,6 +724,19 @@ def upgrade_plan(client_id: str, req: UpgradeRequest):
 # ---------------------------------------------------------------------------
 # M9 — Projects
 # ---------------------------------------------------------------------------
+
+@app.post("/projects/verify-url", response_model=VerifyUrlResult, tags=["M9 Projects"])
+async def verify_project_url(req: VerifyUrlRequest):
+    """
+    Pre-flight checks for a site URL before/while filling the onboarding
+    checklist: HTTPS reachability, HTTP→HTTPS redirect, xmlrpc.php and
+    readme.html exposure, and WordPress detection + version.
+    """
+    try:
+        return await verify_url(req.url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Verification failed: {e}")
+
 
 @app.post("/projects/", response_model=ProjectRecord, tags=["M9 Projects"])
 def create_project(req: ProjectCreateRequest):

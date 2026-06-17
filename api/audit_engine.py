@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
-from models import AuditInput, Prioridad, Ticket, TicketResponse, TicketSummary
+from models import AuditInput, Prioridad, Ticket, TicketResponse, TicketSummary, VerifyUrlResult
 from ticket_engine import generate_tickets
 
 PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
@@ -338,4 +338,87 @@ async def run_full_audit(url: str) -> TicketResponse:
         tickets=tickets,
         checks=checks,
         pagespeed_score=pagespeed_score,
+    )
+
+# ---------------------------------------------------------------------------
+# Pre-flight URL verification (M9 — Projects: "Verificar automáticamente")
+# ---------------------------------------------------------------------------
+
+_WP_GENERATOR_RE = re.compile(
+    r'name=["\']generator["\'][^>]+content=["\']WordPress\s+([\d.]+)', re.I
+)
+_WP_SIGNAL_RE = re.compile(
+    r'wp-content|wp-includes|wp-json|name=["\']generator["\'][^>]+content=["\']WordPress', re.I
+)
+_README_VERSION_RE = re.compile(r'Version\s+([\d.]+)', re.I)
+
+
+async def verify_url(url: str) -> VerifyUrlResult:
+    """
+    Pre-flight checks for a new project's site, run before/while filling the
+    onboarding checklist: HTTPS reachability, HTTP→HTTPS redirect, xmlrpc.php
+    and readme.html exposure, and WordPress detection + version.
+    """
+    if not url.lower().startswith("http"):
+        url = "https://" + url
+    host = urlsplit(url).netloc
+    https_base = f"https://{host}"
+    http_base = f"http://{host}"
+    headers = {"User-Agent": UA}
+
+    async def _get(target: str, follow: bool = True) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=follow) as c:
+            return await c.get(target, headers=headers)
+
+    https_active = False
+    homepage_html = ""
+    try:
+        r = await _get(https_base)
+        https_active = r.status_code < 400
+        homepage_html = r.text
+    except Exception:
+        pass
+
+    http_to_https_redirect = False
+    try:
+        r = await _get(http_base, follow=False)
+        location = r.headers.get("location", "")
+        http_to_https_redirect = r.is_redirect and location.lower().startswith("https://")
+    except Exception:
+        pass
+
+    xmlrpc_disabled = True
+    try:
+        r = await _get(f"{https_base}/xmlrpc.php")
+        xmlrpc_disabled = r.status_code in (403, 404, 410)
+    except Exception:
+        pass
+
+    readme_exposed = False
+    readme_text = ""
+    try:
+        r = await _get(f"{https_base}/readme.html")
+        readme_text = r.text
+        readme_exposed = r.status_code == 200 and "wordpress" in readme_text.lower()
+    except Exception:
+        pass
+
+    wp_version: Optional[str] = None
+    gen_match = _WP_GENERATOR_RE.search(homepage_html)
+    if gen_match:
+        wp_version = gen_match.group(1)
+    elif readme_text:
+        readme_match = _README_VERSION_RE.search(readme_text)
+        if readme_match:
+            wp_version = readme_match.group(1)
+
+    wordpress_detected = bool(wp_version) or bool(_WP_SIGNAL_RE.search(homepage_html)) or readme_exposed
+
+    return VerifyUrlResult(
+        https_active=https_active,
+        http_to_https_redirect=http_to_https_redirect,
+        xmlrpc_disabled=xmlrpc_disabled,
+        readme_exposed=readme_exposed,
+        wordpress_detected=wordpress_detected,
+        wp_version=wp_version,
     )
