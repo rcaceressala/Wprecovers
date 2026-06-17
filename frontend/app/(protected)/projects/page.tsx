@@ -5,6 +5,7 @@ import {
   Plus, X, RefreshCw, FolderKanban, ExternalLink,
   CheckCircle2, XCircle, Download, ClipboardCheck, Lock,
 } from 'lucide-react'
+import { api } from '@/lib/api'
 
 const API_BASE = 'https://wprecovers.onrender.com'
 
@@ -215,6 +216,14 @@ function ProjectDetailModal({
       const updated = await apiFetch<Project>(`/projects/${project.id}/audit-and-baseline`, {
         method: 'POST',
       })
+      localStorage.setItem('wpr_active_project', JSON.stringify({
+        project_id: updated.id,
+        client_name: updated.client_name,
+        site_url: updated.site_url,
+        plan: updated.plan,
+      }))
+      const auditResult = await api.runAudit(updated.site_url)
+      localStorage.setItem('wpr_last_audit', JSON.stringify(auditResult))
       onUpdated(updated)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error al capturar el baseline')

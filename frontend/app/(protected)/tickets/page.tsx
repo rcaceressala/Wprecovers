@@ -153,16 +153,24 @@ function TicketRow({ ticket }: { ticket: Ticket }) {
 // Page
 // ---------------------------------------------------------------------------
 export default function TicketsPage() {
-  const [tickets,  setTickets]  = useState<Ticket[]>([])
-  const [loading,  setLoading]  = useState(true)
-  const [prioFlt,  setPrioFlt]  = useState<string>('all')
-  const [stateFlt, setStateFlt] = useState<string>('all')
+  const [tickets,     setTickets]     = useState<Ticket[]>([])
+  const [loading,     setLoading]     = useState(true)
+  const [prioFlt,     setPrioFlt]     = useState<string>('all')
+  const [stateFlt,    setStateFlt]    = useState<string>('all')
+  const [projectName, setProjectName] = useState<string | null>(null)
+  const [projectUrl,  setProjectUrl]  = useState<string | null>(null)
 
   useEffect(() => {
     const stored = localStorage.getItem('wpr_last_audit')
     if (stored) {
       const parsed = JSON.parse(stored)
       setTickets(parsed.tickets ?? [])
+    }
+    const activeProject = localStorage.getItem('wpr_active_project')
+    if (activeProject) {
+      const parsed = JSON.parse(activeProject)
+      setProjectName(parsed.client_name ?? null)
+      setProjectUrl(parsed.site_url ?? null)
     }
     setLoading(false)
   }, [])
@@ -177,6 +185,11 @@ export default function TicketsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">Tickets</h1>
+          {projectName && (
+            <p className="text-dim text-sm mt-0.5">
+              📁 Proyecto: {projectName} — {projectUrl}
+            </p>
+          )}
           <p className="text-dim text-sm mt-0.5">
             {tickets.length} tickets · {filtered.length} mostrados
           </p>
