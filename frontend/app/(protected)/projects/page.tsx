@@ -1,25 +1,442 @@
 'use client'
 
-import { FolderKanban } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import {
+  Plus, X, RefreshCw, FolderKanban, ExternalLink,
+  CheckCircle2, XCircle, Download, ClipboardCheck, Lock,
+} from 'lucide-react'
+
+const API_BASE = 'https://wprecovers.onrender.com'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+type ProjectStatus = 'DRAFT' | 'OPEN' | 'CLOSED'
+type PlanId = 'starter' | 'growth' | 'scale' | 'elite'
+
+interface Project {
+  id: string
+  client_name: string
+  site_url: string
+  plan: PlanId
+  notas?: string | null
+  status: ProjectStatus
+  score_before?: number | null
+  score_after?: number | null
+  improvement_points?: number | null
+  guarantee_met?: boolean | null
+  created_at?: string
+}
+
+const STATUS_ORDER: ProjectStatus[] = ['DRAFT', 'OPEN', 'CLOSED']
+const STATUS_LABELS: Record<ProjectStatus, string> = {
+  DRAFT: 'Borrador',
+  OPEN: 'En Progreso',
+  CLOSED: 'Cerrado',
+}
+const STATUS_CLS: Record<ProjectStatus, string> = {
+  DRAFT: 'badge-baja',
+  OPEN: 'badge-open',
+  CLOSED: 'badge-done',
+}
+const PLAN_LABELS: Record<PlanId, string> = {
+  starter: 'Starter',
+  growth: 'Growth',
+  scale: 'Scale',
+  elite: 'Elite',
+}
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  })
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      const body = await res.json()
+      detail = body.detail ?? JSON.stringify(body)
+    } catch {
+      // ignore non-JSON error bodies
+    }
+    throw new Error(`${res.status}: ${detail}`)
+  }
+  return res.json()
+}
+
+async function fetchProjects(): Promise<Project[]> {
+  const data = await apiFetch<Project[] | { projects: Project[] }>('/projects')
+  return Array.isArray(data) ? data : data.projects ?? []
+}
+
+// ---------------------------------------------------------------------------
+// Improvement / guarantee badges
+// ---------------------------------------------------------------------------
+function ImprovementBadge({ points }: { points: number | null | undefined }) {
+  if (points === null || points === undefined) return null
+  const cls = points >= 15 ? 'badge-done' : points > 0 ? 'badge-prog' : 'badge-fail'
+  const sign = points > 0 ? '+' : ''
+  return <span className={cls}>{sign}{points} pts</span>
+}
+
+function GuaranteeBadge({ met }: { met: boolean | null | undefined }) {
+  if (met === null || met === undefined) return null
+  return met ? (
+    <span className="badge-done flex items-center gap-1">
+      <CheckCircle2 className="w-3 h-3" /> Garantía cumplida
+    </span>
+  ) : (
+    <span className="badge-fail flex items-center gap-1">
+      <XCircle className="w-3 h-3" /> Garantía no cumplida
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Modal shell
+// ---------------------------------------------------------------------------
+function ModalShell({
+  title, onClose, children,
+}: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+         onClick={onClose}>
+      <div className="card w-full max-w-lg max-h-[85vh] overflow-y-auto"
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold">{title}</h2>
+          <button className="text-muted hover:text-[#e2e8f0]" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Create project modal
+// ---------------------------------------------------------------------------
+function CreateProjectModal({
+  onClose, onCreated,
+}: { onClose: () => void; onCreated: (p: Project) => void }) {
+  const [clientName, setClientName] = useState('')
+  const [siteUrl,    setSiteUrl]    = useState('')
+  const [plan,       setPlan]       = useState<PlanId>('starter')
+  const [notas,      setNotas]      = useState('')
+  const [saving,     setSaving]     = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
+
+  const submit = async () => {
+    if (!clientName.trim() || !siteUrl.trim()) {
+      setError('Cliente y URL son obligatorios')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      const created = await apiFetch<Project>('/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          client_name: clientName.trim(),
+          site_url: siteUrl.trim(),
+          plan,
+          notas: notas.trim() || null,
+        }),
+      })
+      onCreated(created)
+      onClose()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al crear el proyecto')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ModalShell title="Nuevo Proyecto" onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <label className="text-xs text-muted block mb-1">Cliente</label>
+          <input className="input" placeholder="Nombre del cliente"
+            value={clientName} onChange={e => setClientName(e.target.value)} autoFocus />
+        </div>
+        <div>
+          <label className="text-xs text-muted block mb-1">URL del sitio</label>
+          <input className="input" placeholder="https://ejemplo.com"
+            value={siteUrl} onChange={e => setSiteUrl(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-muted block mb-1">Plan</label>
+          <select className="select" value={plan} onChange={e => setPlan(e.target.value as PlanId)}>
+            {(Object.keys(PLAN_LABELS) as PlanId[]).map(p => (
+              <option key={p} value={p}>{PLAN_LABELS[p]}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted block mb-1">Notas</label>
+          <textarea className="input min-h-[80px] resize-none" placeholder="Notas internas (opcional)"
+            value={notas} onChange={e => setNotas(e.target.value)} />
+        </div>
+
+        {error && (
+          <p className="text-xs text-danger">{error}</p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button className="btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button className="btn-primary" onClick={submit} disabled={saving}>
+            {saving ? 'Creando…' : 'Crear Proyecto'}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Project detail modal
+// ---------------------------------------------------------------------------
+function ProjectDetailModal({
+  project, onClose, onUpdated,
+}: { project: Project; onClose: () => void; onUpdated: (p: Project) => void }) {
+  const [busy,  setBusy]  = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const captureBaseline = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await apiFetch<Project>(`/projects/${project.id}/audit-and-baseline`, {
+        method: 'POST',
+      })
+      onUpdated(updated)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al capturar el baseline')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const closeProject = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await apiFetch<Project>(`/projects/${project.id}/close`, {
+        method: 'POST',
+      })
+      onUpdated(updated)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al cerrar el proyecto')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const downloadPdf = () => {
+    window.open(`${API_BASE}/report/download/${project.id}`, '_blank')
+  }
+
+  return (
+    <ModalShell title={project.client_name} onClose={onClose}>
+      <div className="space-y-5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={STATUS_CLS[project.status]}>{STATUS_LABELS[project.status]}</span>
+          <span className="badge bg-s2 text-dim border border-border">{PLAN_LABELS[project.plan]}</span>
+          <a href={project.site_url} target="_blank" rel="noreferrer"
+             className="text-xs text-accent flex items-center gap-1 ml-auto">
+            {project.site_url} <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
+
+        {project.notas && (
+          <p className="text-sm text-dim bg-s2 border border-border rounded-lg p-3">{project.notas}</p>
+        )}
+
+        {/* Scores antes/después */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-s2 border border-border rounded-lg p-3 text-center">
+            <p className="text-xs text-muted mb-1 font-mono uppercase tracking-wide">Score Antes</p>
+            <p className="text-2xl font-mono font-bold text-[#e2e8f0]">
+              {project.score_before ?? '—'}
+            </p>
+          </div>
+          <div className="bg-s2 border border-border rounded-lg p-3 text-center">
+            <p className="text-xs text-muted mb-1 font-mono uppercase tracking-wide">Score Después</p>
+            <p className="text-2xl font-mono font-bold text-[#e2e8f0]">
+              {project.score_after ?? '—'}
+            </p>
+          </div>
+        </div>
+
+        {/* Improvement + guarantee badges */}
+        {(project.improvement_points !== null && project.improvement_points !== undefined) && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <ImprovementBadge points={project.improvement_points} />
+            <GuaranteeBadge met={project.guarantee_met} />
+          </div>
+        )}
+
+        {error && <p className="text-xs text-danger">{error}</p>}
+
+        {/* Status-specific action */}
+        <div className="flex justify-end gap-2 pt-2 border-t border-border">
+          {project.status === 'DRAFT' && (
+            <button className="btn-primary flex items-center gap-2" onClick={captureBaseline} disabled={busy}>
+              {busy
+                ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Capturando…</>
+                : <><ClipboardCheck className="w-3.5 h-3.5" /> Capturar Baseline</>}
+            </button>
+          )}
+          {project.status === 'OPEN' && (
+            <button className="btn-primary flex items-center gap-2" onClick={closeProject} disabled={busy}>
+              {busy
+                ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Cerrando…</>
+                : <><Lock className="w-3.5 h-3.5" /> Cerrar Proyecto</>}
+            </button>
+          )}
+          {project.status === 'CLOSED' && (
+            <button className="btn-primary flex items-center gap-2" onClick={downloadPdf}>
+              <Download className="w-3.5 h-3.5" /> Descargar PDF
+            </button>
+          )}
+        </div>
+      </div>
+    </ModalShell>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Project card
+// ---------------------------------------------------------------------------
+function ProjectCard({ project, onClick }: { project: Project; onClick: () => void }) {
+  return (
+    <button onClick={onClick}
+      className="card text-left hover:border-accent/50 transition-colors w-full">
+      <div className="flex items-start justify-between mb-2">
+        <p className="text-sm font-medium truncate">{project.client_name}</p>
+        <span className="badge bg-s2 text-dim border border-border flex-shrink-0">
+          {PLAN_LABELS[project.plan]}
+        </span>
+      </div>
+      <p className="text-xs text-dim truncate mb-3">{project.site_url}</p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <ImprovementBadge points={project.improvement_points} />
+        <GuaranteeBadge met={project.guarantee_met} />
+      </div>
+    </button>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 export default function ProjectsPage() {
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [selected, setSelected] = useState<Project | null>(null)
+
+  const load = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setProjects(await fetchProjects())
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al cargar proyectos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleCreated = (p: Project) => setProjects(prev => [p, ...prev])
+  const handleUpdated = (p: Project) => {
+    setProjects(prev => prev.map(x => x.id === p.id ? p : x))
+    setSelected(p)
+  }
+
+  const grouped = STATUS_ORDER.map(status => ({
+    status,
+    items: projects.filter(p => p.status === status),
+  }))
+
   return (
     <>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">Proyectos</h1>
-          <p className="text-dim text-sm mt-0.5">Sitios y proyectos gestionados</p>
+          <p className="text-dim text-sm mt-0.5">{projects.length} proyectos</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="btn-ghost border border-border flex items-center gap-2"
+            onClick={load} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+          </button>
+          <button className="btn-primary flex items-center gap-2" onClick={() => setShowCreate(true)}>
+            <Plus className="w-4 h-4" /> Nuevo Proyecto
+          </button>
         </div>
       </div>
 
-      <div className="flex flex-col items-center py-24 gap-3 text-center">
-        <FolderKanban className="w-10 h-10 text-muted" />
-        <p className="text-dim text-sm">No hay proyectos todavía.</p>
-        <a href="/dashboard" className="btn-primary text-sm">Ir al Dashboard → Run Audit</a>
-      </div>
+      {error && (
+        <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                        text-sm rounded-lg px-4 py-3 mb-5">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 animate-pulse">
+          {[...Array(6)].map((_, i) => <div key={i} className="h-32 bg-surface rounded-xl" />)}
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="flex flex-col items-center py-24 gap-3 text-center">
+          <FolderKanban className="w-10 h-10 text-muted" />
+          <p className="text-dim text-sm">No hay proyectos todavía.</p>
+          <button className="btn-primary text-sm" onClick={() => setShowCreate(true)}>
+            Crear el primer proyecto
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {grouped.map(({ status, items }) => (
+            <div key={status}>
+              <div className="flex items-center gap-2 mb-3">
+                <span className={STATUS_CLS[status]}>{STATUS_LABELS[status]}</span>
+                <span className="text-xs text-muted">{items.length}</span>
+              </div>
+              {items.length === 0 ? (
+                <p className="text-xs text-muted italic">Sin proyectos en este estado.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {items.map(p => (
+                    <ProjectCard key={p.id} project={p} onClick={() => setSelected(p)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showCreate && (
+        <CreateProjectModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />
+      )}
+      {selected && (
+        <ProjectDetailModal
+          project={selected}
+          onClose={() => setSelected(null)}
+          onUpdated={handleUpdated}
+        />
+      )}
     </>
   )
 }
