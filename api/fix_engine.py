@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import db
 from models import (
     FixApplyRequest,
     FixLogEntry,
@@ -259,12 +260,35 @@ class RollbackManager:
 
     @classmethod
     def save(cls, entry: FixLogEntry) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO fix_rollback_state (ticket_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (ticket_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (entry.ticket_id, Json(json.loads(entry.model_dump_json()))),
+                )
+            return
+
         cls._path(entry.ticket_id).write_text(
             entry.model_dump_json(indent=2), encoding="utf-8"
         )
 
     @classmethod
     def get(cls, ticket_id: str) -> Optional[FixLogEntry]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data FROM fix_rollback_state WHERE ticket_id = %s",
+                    (ticket_id,),
+                )
+                row = cur.fetchone()
+            return FixLogEntry(**row[0]) if row else None
+
         path = cls._path(ticket_id)
         if not path.exists():
             return None
@@ -272,6 +296,13 @@ class RollbackManager:
 
     @classmethod
     def mark_rolled_back(cls, ticket_id: str) -> None:
+        if db.is_configured():
+            entry = cls.get(ticket_id)
+            if entry:
+                entry.status = FixStatus.ROLLED_BACK
+                cls.save(entry)
+            return
+
         path = cls._path(ticket_id)
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -293,6 +324,17 @@ class FixLog:
 
     @classmethod
     def append(cls, entry: FixLogEntry) -> Path:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO fix_log (ticket_id, data) VALUES (%s, %s)",
+                    (entry.ticket_id, Json(json.loads(entry.model_dump_json()))),
+                )
+            # No real file on disk in DB mode — callers only use `.name`.
+            return Path(f"{entry.ticket_id}.jsonl")
+
         path = cls._path(entry.ticket_id)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(entry.model_dump_json() + "\n")
@@ -300,6 +342,15 @@ class FixLog:
 
     @classmethod
     def read(cls, ticket_id: str) -> List[FixLogEntry]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data FROM fix_log WHERE ticket_id = %s ORDER BY id ASC",
+                    (ticket_id,),
+                )
+                rows = cur.fetchall()
+            return [FixLogEntry(**r[0]) for r in rows]
+
         path = cls._path(ticket_id)
         if not path.exists():
             return []
@@ -315,6 +366,34 @@ class FixLog:
 
     @classmethod
     def list_all(cls) -> List[Dict[str, Any]]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ticket_id, MAX(id) AS last_id
+                    FROM fix_log
+                    GROUP BY ticket_id
+                    ORDER BY last_id DESC
+                    """
+                )
+                ticket_ids = [r[0] for r in cur.fetchall()]
+            result = []
+            for ticket_id in ticket_ids:
+                entries = cls.read(ticket_id)
+                if entries:
+                    last = entries[-1]
+                    result.append(
+                        {
+                            "ticket_id": last.ticket_id,
+                            "check_name": last.check_name,
+                            "categoria": last.categoria,
+                            "status": last.status,
+                            "timestamp": last.timestamp,
+                            "total_operations": len(entries),
+                        }
+                    )
+            return result
+
         if not _LOGS_DIR.exists():
             return []
         result = []

@@ -8,7 +8,17 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, Header, HTTPException
 
+import db
 from models import CheckoutRequest, ClientSubscription, UpgradeRequest, UsageRecord
+
+_SUB_COLUMNS = [
+    "client_id", "plan", "stripe_customer_id", "stripe_subscription_id",
+    "stripe_subscription_item_id", "status", "created_at", "updated_at",
+]
+_USAGE_COLUMNS = [
+    "client_id", "period", "audits_used", "fixes_used", "agents_used",
+    "reports_used", "last_updated",
+]
 
 BILLING_DIR = Path(__file__).parent / "billing"
 _SUBS_DIR = BILLING_DIR / "subscriptions"
@@ -106,12 +116,35 @@ class SubscriptionStore:
 
     @classmethod
     def save(cls, sub: ClientSubscription) -> None:
+        if db.is_configured():
+            values = [getattr(sub, c) for c in _SUB_COLUMNS]
+            assignments = ", ".join(f"{c} = EXCLUDED.{c}" for c in _SUB_COLUMNS if c != "client_id")
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO subscriptions ({", ".join(_SUB_COLUMNS)})
+                    VALUES ({", ".join(["%s"] * len(_SUB_COLUMNS))})
+                    ON CONFLICT (client_id) DO UPDATE SET {assignments}
+                    """,
+                    values,
+                )
+            return
+
         cls._path(sub.client_id).write_text(
             sub.model_dump_json(indent=2), encoding="utf-8"
         )
 
     @classmethod
     def get(cls, client_id: str) -> Optional[ClientSubscription]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(_SUB_COLUMNS)} FROM subscriptions WHERE client_id = %s",
+                    (client_id,),
+                )
+                row = cur.fetchone()
+            return ClientSubscription(**dict(zip(_SUB_COLUMNS, row))) if row else None
+
         path = cls._path(client_id)
         if not path.exists():
             return None
@@ -119,6 +152,12 @@ class SubscriptionStore:
 
     @classmethod
     def list_all(cls) -> List[ClientSubscription]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(f"SELECT {', '.join(_SUB_COLUMNS)} FROM subscriptions")
+                rows = cur.fetchall()
+            return [ClientSubscription(**dict(zip(_SUB_COLUMNS, r))) for r in rows]
+
         if not _SUBS_DIR.exists():
             return []
         result = []
@@ -155,6 +194,23 @@ class UsageTracker:
     @classmethod
     def get(cls, client_id: str) -> UsageRecord:
         period = cls._current_period()
+
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(_USAGE_COLUMNS)} FROM usage_records "
+                    f"WHERE client_id = %s AND period = %s",
+                    (client_id, period),
+                )
+                row = cur.fetchone()
+            if row:
+                return UsageRecord(**dict(zip(_USAGE_COLUMNS, row)))
+            return UsageRecord(
+                client_id=client_id,
+                period=period,
+                last_updated=datetime.now(timezone.utc).isoformat(),
+            )
+
         path = cls._path(client_id, period)
         if not path.exists():
             return UsageRecord(
@@ -170,6 +226,23 @@ class UsageTracker:
         field = f"{metric}_used"
         setattr(record, field, getattr(record, field, 0) + by)
         record.last_updated = datetime.now(timezone.utc).isoformat()
+
+        if db.is_configured():
+            values = [getattr(record, c) for c in _USAGE_COLUMNS]
+            assignments = ", ".join(
+                f"{c} = EXCLUDED.{c}" for c in _USAGE_COLUMNS if c not in ("client_id", "period")
+            )
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO usage_records ({", ".join(_USAGE_COLUMNS)})
+                    VALUES ({", ".join(["%s"] * len(_USAGE_COLUMNS))})
+                    ON CONFLICT (client_id, period) DO UPDATE SET {assignments}
+                    """,
+                    values,
+                )
+            return record
+
         path = cls._path(client_id, record.period)
         path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
         return record

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import db
 from models import DeltaMetrics, FixApplied, QARecord, SiteMetrics
 
 EVIDENCE_DIR = Path(__file__).parent / "evidence"
@@ -23,7 +24,6 @@ class BaselineCapture:
 
     @staticmethod
     def capture(ticket_id: str, metrics: SiteMetrics) -> Dict[str, Any]:
-        _BASELINE_DIR.mkdir(parents=True, exist_ok=True)
         import time
         record: Dict[str, Any] = {
             "ticket_id": ticket_id,
@@ -32,6 +32,22 @@ class BaselineCapture:
             "metrics": metrics.model_dump(),
         }
         _baselines[ticket_id] = record
+
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO qa_baselines (ticket_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (ticket_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (ticket_id, Json(record)),
+                )
+            return record
+
+        _BASELINE_DIR.mkdir(parents=True, exist_ok=True)
         (_BASELINE_DIR / f"{ticket_id}.json").write_text(
             json.dumps(record, indent=2), encoding="utf-8"
         )
@@ -41,6 +57,16 @@ class BaselineCapture:
     def get(ticket_id: str) -> Optional[Dict[str, Any]]:
         if ticket_id in _baselines:
             return _baselines[ticket_id]
+
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM qa_baselines WHERE ticket_id = %s", (ticket_id,))
+                row = cur.fetchone()
+            if row:
+                _baselines[ticket_id] = row[0]
+                return row[0]
+            return None
+
         path = _BASELINE_DIR / f"{ticket_id}.json"
         if path.exists():
             record = json.loads(path.read_text(encoding="utf-8"))
@@ -108,8 +134,20 @@ class EvidenceLogger:
 
     @staticmethod
     def save(record: QARecord) -> Path:
-        EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO qa_evidence (ticket_id, data) VALUES (%s, %s)",
+                    (record.ticket_id, Json(json.loads(record.model_dump_json()))),
+                )
+            # No real file on disk in DB mode — callers only use `.name`.
+            return Path(f"{record.ticket_id}_{ts}.json")
+
+        EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
         path = EVIDENCE_DIR / f"{record.ticket_id}_{ts}.json"
         path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
         return path
@@ -117,6 +155,15 @@ class EvidenceLogger:
     @staticmethod
     def load_latest(ticket_id: str) -> Optional[QARecord]:
         """Return the most recent QA record for a given ticket."""
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data FROM qa_evidence WHERE ticket_id = %s ORDER BY id DESC LIMIT 1",
+                    (ticket_id,),
+                )
+                row = cur.fetchone()
+            return QARecord(**row[0]) if row else None
+
         if not EVIDENCE_DIR.exists():
             return None
         candidates = sorted(
@@ -129,6 +176,24 @@ class EvidenceLogger:
 
     @staticmethod
     def list_all() -> List[Dict[str, Any]]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT ticket_id, data FROM qa_evidence ORDER BY id DESC")
+                rows = cur.fetchall()
+            result = []
+            for ticket_id, data in rows:
+                result.append(
+                    {
+                        "file": f"{ticket_id}.json",
+                        "ticket_id": data.get("ticket_id"),
+                        "categoria": data.get("categoria"),
+                        "resultado": data.get("resultado"),
+                        "timestamp": data.get("timestamp"),
+                        "improvement_pct": data.get("delta_metrics", {}).get("improvement_pct"),
+                    }
+                )
+            return result
+
         if not EVIDENCE_DIR.exists():
             return []
         result = []

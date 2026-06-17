@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import db
 from models import (
     ChartData,
     ClientReportSection,
@@ -486,7 +487,14 @@ class BeforeAfterReport:
 # ---------------------------------------------------------------------------
 
 class ReportStore:
-    """Persists and retrieves report records as JSON."""
+    """
+    Persists and retrieves report records.
+
+    In Postgres mode the actual PDF bytes are stored alongside the JSON
+    metadata (column `pdf_data`), since the local `pdf_path` file lives on
+    Render's ephemeral disk and won't survive a redeploy — see
+    `load_pdf_bytes` / `/report/download/{ticket_id}` in main.py.
+    """
 
     @staticmethod
     def _path(ticket_id: str) -> Path:
@@ -494,20 +502,71 @@ class ReportStore:
         return REPORTS_DIR / f"{ticket_id}.json"
 
     @classmethod
-    def save(cls, record: ReportRecord) -> None:
+    def save(cls, record: ReportRecord, pdf_bytes: Optional[bytes] = None) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO reports (ticket_id, data, pdf_data)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (ticket_id) DO UPDATE SET
+                        data = EXCLUDED.data,
+                        pdf_data = COALESCE(EXCLUDED.pdf_data, reports.pdf_data)
+                    """,
+                    (record.ticket_id, Json(json.loads(record.model_dump_json())), pdf_bytes),
+                )
+            return
+
         cls._path(record.ticket_id).write_text(
             record.model_dump_json(indent=2), encoding="utf-8"
         )
 
     @classmethod
     def load(cls, ticket_id: str) -> Optional[ReportRecord]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM reports WHERE ticket_id = %s", (ticket_id,))
+                row = cur.fetchone()
+            return ReportRecord(**row[0]) if row else None
+
         path = cls._path(ticket_id)
         if not path.exists():
             return None
         return ReportRecord(**json.loads(path.read_text(encoding="utf-8")))
 
     @classmethod
+    def load_pdf_bytes(cls, ticket_id: str) -> Optional[bytes]:
+        """PDF bytes stored in Postgres for this ticket, if any."""
+        if not db.is_configured():
+            return None
+        with db.get_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pdf_data FROM reports WHERE ticket_id = %s", (ticket_id,))
+            row = cur.fetchone()
+        return bytes(row[0]) if row and row[0] is not None else None
+
+    @classmethod
     def list_all(cls) -> List[Dict[str, Any]]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM reports ORDER BY ticket_id DESC")
+                rows = cur.fetchall()
+            result = []
+            for (data,) in rows:
+                result.append({
+                    "ticket_id": data["ticket_id"],
+                    "client_name": data["client_name"],
+                    "site_url": data["site_url"],
+                    "score_before": data["score_before"],
+                    "score_after": data["score_after"],
+                    "improvement_points": data["improvement_points"],
+                    "guarantee_met": data["guarantee_met"],
+                    "timestamp": data["timestamp"],
+                    "pdf_path": data.get("pdf_path"),
+                })
+            return result
+
         if not REPORTS_DIR.exists():
             return []
         result = []
@@ -556,6 +615,7 @@ def build_full_report(ticket_id: str, req: ReportRequest) -> ReportRecord:
 
     # PDF (graceful failure if reportlab not installed)
     pdf_path: Optional[str] = None
+    pdf_bytes: Optional[bytes] = None
     try:
         pdf_file = BeforeAfterReport.generate(
             ticket_id, req,
@@ -564,6 +624,8 @@ def build_full_report(ticket_id: str, req: ReportRequest) -> ReportRecord:
             checks_fixed, guarantee, resumen,
         )
         pdf_path = str(pdf_file)
+        if db.is_configured():
+            pdf_bytes = pdf_file.read_bytes()
     except RuntimeError:
         pdf_path = None
 
@@ -588,5 +650,5 @@ def build_full_report(ticket_id: str, req: ReportRequest) -> ReportRecord:
         client_sections=sections,
         notas=req.notas,
     )
-    ReportStore.save(record)
+    ReportStore.save(record, pdf_bytes=pdf_bytes)
     return record

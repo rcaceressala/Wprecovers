@@ -60,3 +60,98 @@ def init_db() -> None:
                     updated_at TEXT NOT NULL
                 )
             """)
+
+            # fix_engine.py — RollbackManager (latest applied fix per ticket)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fix_rollback_state (
+                    ticket_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL
+                )
+            """)
+
+            # fix_engine.py — FixLog (append-only audit trail)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fix_log (
+                    id SERIAL PRIMARY KEY,
+                    ticket_id TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS fix_log_ticket_idx ON fix_log (ticket_id)")
+
+            # agents_engine.py — AgentHistoryStore (append-only per ticket)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_history (
+                    id SERIAL PRIMARY KEY,
+                    ticket_id TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS agent_history_ticket_idx ON agent_history (ticket_id)")
+
+            # agents_engine.py — PendingFixStore (one mutable record per ticket)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pending_fixes (
+                    ticket_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL
+                )
+            """)
+
+            # qa_engine.py — BaselineCapture
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS qa_baselines (
+                    ticket_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL
+                )
+            """)
+
+            # qa_engine.py — EvidenceLogger (append-only, multiple per ticket)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS qa_evidence (
+                    id SERIAL PRIMARY KEY,
+                    ticket_id TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS qa_evidence_ticket_idx ON qa_evidence (ticket_id)")
+
+            # billing_engine.py — SubscriptionStore
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    client_id TEXT PRIMARY KEY,
+                    plan TEXT NOT NULL,
+                    stripe_customer_id TEXT,
+                    stripe_subscription_id TEXT,
+                    stripe_subscription_item_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            # billing_engine.py — UsageTracker (one row per client per month)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS usage_records (
+                    client_id TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    audits_used INTEGER NOT NULL DEFAULT 0,
+                    fixes_used INTEGER NOT NULL DEFAULT 0,
+                    agents_used INTEGER NOT NULL DEFAULT 0,
+                    reports_used INTEGER NOT NULL DEFAULT 0,
+                    last_updated TEXT NOT NULL,
+                    PRIMARY KEY (client_id, period)
+                )
+            """)
+
+            # report_engine.py — ReportStore (metadata + PDF bytes so downloads
+            # survive redeploys too, not just the JSON record)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS reports (
+                    ticket_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL,
+                    pdf_data BYTEA
+                )
+            """)

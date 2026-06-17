@@ -11,7 +11,7 @@ load_dotenv(Path(__file__).parent / ".env", override=True)
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from pydantic import BaseModel
 
@@ -397,6 +397,17 @@ def download_pdf(ticket_id: str):
         raise HTTPException(status_code=404, detail=f"No report found for ticket '{ticket_id}'")
     if not record.pdf_path:
         raise HTTPException(status_code=404, detail="PDF not available — install reportlab to enable PDF generation")
+
+    filename = Path(record.pdf_path).name
+
+    # Postgres-backed deploys: the local pdf_path lives on Render's ephemeral
+    # disk and won't survive a redeploy, so prefer the bytes stored in DB.
+    pdf_bytes = ReportStore.load_pdf_bytes(ticket_id)
+    if pdf_bytes is not None:
+        return Response(content=pdf_bytes, media_type="application/pdf", headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        })
+
     pdf = Path(record.pdf_path)
     if not pdf.exists():
         raise HTTPException(status_code=404, detail="PDF file not found on disk")

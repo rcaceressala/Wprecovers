@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import db
 from models import AgentResponse, PendingFix, SiteContext, Ticket
 from project_engine import resolve_api_key
 from wp_agent_client import WPAgentClient
@@ -254,12 +255,31 @@ class AgentHistoryStore:
 
     @classmethod
     def append(cls, response: AgentResponse) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO agent_history (ticket_id, data) VALUES (%s, %s)",
+                    (response.ticket_id, Json(json.loads(response.model_dump_json()))),
+                )
+            return
+
         path = cls._path(response.ticket_id)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(response.model_dump_json() + "\n")
 
     @classmethod
     def load(cls, ticket_id: str) -> List[AgentResponse]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data FROM agent_history WHERE ticket_id = %s ORDER BY id ASC",
+                    (ticket_id,),
+                )
+                rows = cur.fetchall()
+            return [AgentResponse(**r[0]) for r in rows]
+
         path = cls._path(ticket_id)
         if not path.exists():
             return []
@@ -275,6 +295,31 @@ class AgentHistoryStore:
 
     @classmethod
     def list_all(cls) -> List[Dict[str, Any]]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ticket_id, MAX(id) AS last_id
+                    FROM agent_history
+                    GROUP BY ticket_id
+                    ORDER BY last_id DESC
+                    """
+                )
+                ticket_ids = [r[0] for r in cur.fetchall()]
+            result = []
+            for ticket_id in ticket_ids:
+                entries = cls.load(ticket_id)
+                if entries:
+                    last = entries[-1]
+                    result.append({
+                        "ticket_id": last.ticket_id,
+                        "last_agent": last.agent,
+                        "last_scope": last.scope,
+                        "last_timestamp": last.timestamp,
+                        "total_interactions": len(entries),
+                    })
+            return result
+
         if not _HISTORY_DIR.exists():
             return []
         result = []
@@ -421,12 +466,32 @@ class PendingFixStore:
 
     @classmethod
     def save(cls, ticket_id: str, record: Dict[str, Any]) -> Path:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO pending_fixes (ticket_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (ticket_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (ticket_id, Json(record)),
+                )
+            return Path(f"{ticket_id}.json")
+
         path = cls._path(ticket_id)
         path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
 
     @classmethod
     def get(cls, ticket_id: str) -> Optional[Dict[str, Any]]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM pending_fixes WHERE ticket_id = %s", (ticket_id,))
+                row = cur.fetchone()
+            return row[0] if row else None
+
         path = cls._path(ticket_id)
         if not path.exists():
             return None
@@ -434,6 +499,11 @@ class PendingFixStore:
 
     @classmethod
     def delete(cls, ticket_id: str) -> bool:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM pending_fixes WHERE ticket_id = %s", (ticket_id,))
+                return cur.rowcount > 0
+
         path = cls._path(ticket_id)
         if path.exists():
             path.unlink()
@@ -442,6 +512,11 @@ class PendingFixStore:
 
     @classmethod
     def list_all(cls) -> List[Dict[str, Any]]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM pending_fixes ORDER BY ticket_id ASC")
+                return [r[0] for r in cur.fetchall()]
+
         if not _PENDING_DIR.exists():
             return []
         result: List[Dict[str, Any]] = []
