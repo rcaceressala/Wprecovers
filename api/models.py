@@ -268,6 +268,11 @@ class SiteContext(BaseModel):
     sector: Optional[str] = None
     notas: Optional[str] = None
     project_id: Optional[str] = None
+    # Pre-LLM enrichment (fetched live from the homepage by SEOContextEnricher)
+    # — lets SEOAgent target a real wp_post_id instead of guessing one.
+    wp_post_id: Optional[int] = None
+    h1_count: Optional[int] = None
+    content_excerpt: Optional[str] = None
 
 
 class PendingFix(BaseModel):

@@ -7,9 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 import db
-from models import AgentResponse, PendingFix, SiteContext, Ticket
+from models import AgentResponse, Categoria, PendingFix, SiteContext, Ticket
 from project_engine import resolve_api_key
+from ticket_engine import CHECK_CONFIG
 from wp_agent_client import WPAgentClient
 
 AGENTS_DIR = Path(__file__).parent / "agents"
@@ -32,11 +35,49 @@ Responde ÚNICAMENTE con este JSON (sin texto adicional, sin bloques markdown):
   "estimacion_impacto": "impacto esperado cuantificable"
 }"""
 
+_SEO_WHITELIST = """\
+COMANDOS WP-CLI PERMITIDOS (el plugin WPRepro Agent solo ejecuta estos — \
+cualquier otro es rechazado por su whitelist):
+- wp option update <nombre> <valor>
+- wp post meta update <post_id> <meta_key> <meta_value>
+- wp plugin activate|deactivate|update|list|status <slug>
+- wp cache flush
+- wp rewrite flush
+- wp yoast ...
+
+Reglas de los comandos:
+- <post_id> debe ser numérico (usa el wp_post_id verificado del contexto, nunca lo inventes).
+- El valor final puede ir entre comillas dobles si contiene espacios.
+- NUNCA uses los caracteres ; & | ` $ < > ni saltos de línea dentro de un comando — \
+son rechazados por seguridad.
+
+Si la corrección requiere modificar el contenido (post_content) de una página — por \
+ejemplo, insertar o eliminar un <h1> — NO existe un comando wp-cli para eso. En su lugar, \
+devuelve un snippet PHP autocontenido dentro de un bloque ```php que use \
+add_filter('the_content', ...) (este snippet se aplica vía el pipeline de revisión manual, \
+nunca edites post_content directamente ni generes HTML/Markdown fuera del bloque ```php)."""
+
 _SEO_SYSTEM = f"""Eres SEOAgent, especialista en SEO técnico para WordPress dentro de WPRecover 2.0.
 Analiza tickets de SEO fallidos y genera recomendaciones precisas y accionables.
 
 EXPERIENCIA: meta tags, canonicals, sitemaps XML, robots.txt, Schema.org, indexación,
 Yoast/Rank Math, Core Web Vitals, Google Search Console, penalizaciones algorítmicas.
+
+{_SEO_WHITELIST}
+
+REGLAS PARA RESOLUCIÓN AUTOMÁTICA DE ESTOS DOS CHECKS:
+- "Falta meta descripción" (meta_desc): si el contexto incluye un wp_post_id verificado, \
+fix_sugerido debe ser EXACTAMENTE una línea:
+  wp post meta update <wp_post_id> _yoast_wpseo_metadesc "<descripción de 120-155 caracteres, \
+basada en content_excerpt, sin los caracteres prohibidos>"
+  Si no hay wp_post_id en el contexto, devuelve fix_sugerido=null y explica en recomendaciones \
+que se necesita identificar el post de portada antes de poder aplicar el fix.
+- "H1 ausente o duplicado" (h1): usa h1_count del contexto.
+  - h1_count == 0 → genera un snippet ```php que inyecte un único <h1> coherente con \
+content_excerpt usando add_filter('the_content', ...).
+  - h1_count > 1 → genera un snippet ```php que elimine los <h1> adicionales dejando solo \
+el primero (por ejemplo con preg_replace en un add_filter('the_content', ...)).
+  - Nunca generes un comando wp-cli para este check — no existe uno permitido.
 
 {_JSON_SCHEMA}"""
 
@@ -146,6 +187,17 @@ class AgentBase:
 
     @staticmethod
     def _build_user_message(ticket: Ticket, context: SiteContext) -> str:
+        enrichment = ""
+        if context.wp_post_id is not None or context.h1_count is not None or context.content_excerpt:
+            enrichment = (
+                f"\nDATOS VERIFICADOS DEL SITIO (obtenidos en vivo, no asumas otros valores):\n"
+                f"wp_post_id (ID del post/página de portada): "
+                f"{context.wp_post_id if context.wp_post_id is not None else 'No detectado'}\n"
+                f"h1_count (cantidad de <h1> encontrados): "
+                f"{context.h1_count if context.h1_count is not None else 'No determinado'}\n"
+                f"content_excerpt (extracto del contenido visible): "
+                f"{context.content_excerpt or 'No disponible'}\n"
+            )
         return (
             f"TICKET:\n"
             f"ID: {ticket.id}\n"
@@ -162,6 +214,7 @@ class AgentBase:
             f"PageSpeed: {context.pagespeed_score if context.pagespeed_score is not None else 'N/A'}\n"
             f"Sector: {context.sector or 'General'}\n"
             f"Notas: {context.notas or 'Ninguna'}\n"
+            f"{enrichment}"
         )
 
     @staticmethod
@@ -241,6 +294,88 @@ SCOPE_TO_AGENT: Dict[str, AgentBase] = {
     "Reportes": ReportAgent(),
     "Prospección": OutreachAgent(),
 }
+
+
+# ---------------------------------------------------------------------------
+# SEOContextEnricher — pre-LLM enrichment for auto-resolvable SEO tickets
+#
+# Fetches the live homepage HTML so SEOAgent gets verified facts (the real
+# post ID behind the front page, the actual <h1> count, real body text)
+# instead of guessing them — required to safely auto-resolve "meta_desc"
+# (needs a wp_post_id to target with wp post meta update) and "h1" (needs
+# to know whether it's missing vs. duplicated).
+# ---------------------------------------------------------------------------
+
+_H1_TAG_RE = re.compile(r"<h1\b", re.IGNORECASE)
+_SHORTLINK_RE = re.compile(
+    r'rel=["\']shortlink["\'][^>]*href=["\'][^"\']*\?p=(\d+)', re.IGNORECASE
+)
+_BODY_POST_ID_RE = re.compile(r'\b(?:page-id|postid)-(\d+)\b')
+_BODY_TAG_RE = re.compile(r"<body[^>]*>(.*)</body>", re.IGNORECASE | re.DOTALL)
+_SCRIPT_STYLE_TAG_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_ANY_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+# Tickets that SEOAgent can resolve automatically — check_name -> handled by
+# a verified pre-LLM fetch, see CHECK_CONFIG[Categoria.SEO] in ticket_engine.py.
+AUTO_RESOLVABLE_SEO_CHECKS = {"meta_desc", "h1"}
+
+# Reverse lookup: ticket.titulo -> check_name (Ticket has no check_name field,
+# so this is how we recognize e.g. "Falta meta descripción" == "meta_desc").
+_SEO_CHECK_NAME_BY_TITLE: Dict[str, str] = {
+    cfg[0]: check_name
+    for check_name, cfg in CHECK_CONFIG.get(Categoria.SEO, {}).items()
+}
+
+
+def _seo_check_name(ticket: Ticket) -> Optional[str]:
+    if str(ticket.categoria).split(".")[-1] != "SEO":
+        return None
+    return _SEO_CHECK_NAME_BY_TITLE.get(ticket.titulo)
+
+
+def _is_auto_resolvable_seo_ticket(ticket: Ticket) -> bool:
+    return _seo_check_name(ticket) in AUTO_RESOLVABLE_SEO_CHECKS
+
+
+class SEOContextEnricher:
+    """Fetches the homepage and extracts wp_post_id / h1_count / content_excerpt."""
+
+    @staticmethod
+    def enrich(url: str) -> Dict[str, Any]:
+        empty = {"wp_post_id": None, "h1_count": None, "content_excerpt": None}
+        if not url:
+            return empty
+
+        try:
+            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+                resp = client.get(url, headers={"User-Agent": "WPRecoverBot/2.0"})
+                resp.raise_for_status()
+                html = resp.text
+        except Exception:
+            return empty
+
+        h1_count = len(_H1_TAG_RE.findall(html))
+
+        wp_post_id: Optional[int] = None
+        match = _SHORTLINK_RE.search(html) or _BODY_POST_ID_RE.search(html)
+        if match:
+            try:
+                wp_post_id = int(match.group(1))
+            except ValueError:
+                wp_post_id = None
+
+        body_match = _BODY_TAG_RE.search(html)
+        body_html = body_match.group(1) if body_match else html
+        text = _SCRIPT_STYLE_TAG_RE.sub(" ", body_html)
+        text = _ANY_TAG_RE.sub(" ", text)
+        text = _WHITESPACE_RE.sub(" ", text).strip()
+
+        return {
+            "wp_post_id": wp_post_id,
+            "h1_count": h1_count,
+            "content_excerpt": text[:500] if text else None,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +762,11 @@ class AgentOrchestrator:
                 f"No agent configured for category '{ticket.categoria}'. "
                 f"Available scopes: {list(SCOPE_TO_AGENT.keys())}"
             )
+
+        if _is_auto_resolvable_seo_ticket(ticket) and site_context.url:
+            enrichment = SEOContextEnricher.enrich(site_context.url)
+            site_context = site_context.model_copy(update=enrichment)
+
         response = agent.run(ticket, site_context, historial or [])
         _build_pending_fix(response, ticket, site_context)
         AgentHistoryStore.append(response)
