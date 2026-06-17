@@ -346,3 +346,38 @@ class UsageRecord(BaseModel):
 
 class UpgradeRequest(BaseModel):
     new_plan: str = Field(..., description="Target plan: starter | growth | scale | elite")
+
+
+# ---------------------------------------------------------------------------
+# M9 — Projects
+# ---------------------------------------------------------------------------
+
+class ProjectStatus(str, Enum):
+    DRAFT = "DRAFT"
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+
+class ProjectCreateRequest(BaseModel):
+    client_name: str
+    site_url: str
+    plan: Literal["starter", "growth", "scale", "elite"] = "starter"
+    notas: Optional[str] = None
+
+
+class ProjectRecord(BaseModel):
+    id: str
+    client_name: str
+    site_url: str
+    plan: Literal["starter", "growth", "scale", "elite"]
+    notas: Optional[str] = None
+    status: ProjectStatus = ProjectStatus.DRAFT
+    score_before: Optional[float] = None
+    score_after: Optional[float] = None
+    improvement_points: Optional[float] = None
+    improvement_pct: Optional[float] = None
+    guarantee_met: Optional[bool] = None
+    checks_before: Optional[Dict[str, Dict[str, bool]]] = None
+    pagespeed_before: Optional[float] = None
+    created_at: str
+    updated_at: str

@@ -22,6 +22,9 @@ from models import (
     CheckoutRequest,
     FixApplyRequest,
     Prioridad,
+    ProjectCreateRequest,
+    ProjectRecord,
+    ProjectStatus,
     ReportRequest,
     RollbackRequest,
     SiteMetrics,
@@ -38,6 +41,7 @@ from agents_engine import AgentHistoryStore, AgentOrchestrator, PendingFixStore,
 from audit_engine import run_full_audit
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
+from project_engine import ProjectStore
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
 from report_engine import GuaranteeEvaluator, ReportStore, build_full_report
 from ticket_engine import generate_tickets
@@ -713,3 +717,126 @@ def upgrade_plan(client_id: str, req: UpgradeRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return result
+
+
+# ---------------------------------------------------------------------------
+# M9 — Projects
+# ---------------------------------------------------------------------------
+
+@app.post("/projects/", response_model=ProjectRecord, tags=["M9 Projects"])
+def create_project(req: ProjectCreateRequest):
+    """
+    Create a new project in DRAFT status.
+    """
+    return ProjectStore.create(req)
+
+
+@app.get("/projects/", tags=["M9 Projects"])
+def list_projects():
+    """
+    List all projects, most recently created first.
+    """
+    return {"projects": ProjectStore.list_all()}
+
+
+@app.get("/projects/{project_id}", response_model=ProjectRecord, tags=["M9 Projects"])
+def get_project(project_id: str):
+    """
+    Return a single project record.
+    """
+    record = ProjectStore.get(project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
+    return record
+
+
+@app.post("/projects/{project_id}/audit-and-baseline", response_model=ProjectRecord, tags=["M9 Projects"])
+async def audit_and_baseline(project_id: str):
+    """
+    Run a fresh M1 audit on the project's site_url and capture it as the baseline.
+    Transitions the project DRAFT -> OPEN.
+    """
+    record = ProjectStore.get(project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
+    if record.status != ProjectStatus.DRAFT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Project '{project_id}' is '{record.status}', expected DRAFT to capture baseline",
+        )
+
+    try:
+        audit_result = await run_full_audit(record.site_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audit failed: {e}")
+    if audit_result.checks is None:
+        raise HTTPException(status_code=500, detail="Audit did not return checks data")
+
+    record.checks_before = audit_result.checks
+    record.pagespeed_before = audit_result.pagespeed_score
+    record.score_before = audit_result.recovery_score
+    record.status = ProjectStatus.OPEN
+    record.updated_at = datetime.now(timezone.utc).isoformat()
+    ProjectStore.save(record)
+    return record
+
+
+@app.post("/projects/{project_id}/close", response_model=ProjectRecord, tags=["M9 Projects"])
+async def close_project(project_id: str):
+    """
+    Run a final M1 audit, compare against the captured baseline, evaluate the
+    improvement guarantee (>= 15 pts), generate the PDF report, and transition
+    the project OPEN -> CLOSED.
+
+    The PDF becomes available at GET /report/download/{project_id}.
+    """
+    record = ProjectStore.get(project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
+    if record.status != ProjectStatus.OPEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Project '{project_id}' is '{record.status}', expected OPEN to close",
+        )
+    if not record.checks_before:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Project '{project_id}' has no baseline. Call audit-and-baseline first.",
+        )
+
+    try:
+        audit_result = await run_full_audit(record.site_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audit failed: {e}")
+    if audit_result.checks is None:
+        raise HTTPException(status_code=500, detail="Audit did not return checks data")
+
+    report_req = ReportRequest(
+        client_name=record.client_name,
+        site_url=record.site_url,
+        baseline=SiteMetrics(
+            pagespeed_score=record.pagespeed_before or 0.0,
+            recovery_score=record.score_before or 0.0,
+            checks=record.checks_before,
+        ),
+        post_fix=SiteMetrics(
+            pagespeed_score=audit_result.pagespeed_score or 0.0,
+            recovery_score=audit_result.recovery_score,
+            checks=audit_result.checks,
+        ),
+        notas=record.notas,
+    )
+    try:
+        report = build_full_report(project_id, report_req)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    record.score_before = report.score_before
+    record.score_after = report.score_after
+    record.improvement_points = report.improvement_points
+    record.improvement_pct = report.improvement_pct
+    record.guarantee_met = report.guarantee_met
+    record.status = ProjectStatus.CLOSED
+    record.updated_at = datetime.now(timezone.utc).isoformat()
+    ProjectStore.save(record)
+    return record
