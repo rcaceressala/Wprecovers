@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -147,6 +147,7 @@ class AgentBase:
         ticket: Ticket,
         site_context: SiteContext,
         historial: List[Dict[str, Any]],
+        validate: Optional[Callable[[Dict[str, Any]], Tuple[bool, str]]] = None,
     ) -> AgentResponse:
         try:
             import anthropic as _anthropic
@@ -161,16 +162,35 @@ class AgentBase:
             {"role": "user", "content": user_msg}
         ]
 
-        response = client.messages.create(
-            model=self.MODEL,
-            max_tokens=self.MAX_TOKENS,
-            system=self.SYSTEM_PROMPT,
-            messages=messages,
-        )
-
-        text = next((b.text for b in response.content if b.type == "text"), "")
-        tokens = response.usage.input_tokens + response.usage.output_tokens
+        text, tokens = self._invoke(client, messages)
         parsed = self._parse_json(text)
+
+        # Server-side validation for fix_sugerido (auto-resolvable SEO checks):
+        # one corrective retry before giving up and nulling the fix, so an
+        # invalid/placeholder/non-whitelisted command never reaches staging.
+        if validate is not None:
+            ok, reason = validate(parsed)
+            if not ok:
+                messages.append({"role": "assistant", "content": text})
+                messages.append({"role": "user", "content": (
+                    f"Tu fix_sugerido anterior no es válido: {reason}. "
+                    "Corrígelo siguiendo EXACTAMENTE el formato indicado en las "
+                    "instrucciones del sistema (sin placeholders, sin caracteres "
+                    "prohibidos, una sola línea si es wp-cli) y responde de nuevo "
+                    "con el mismo JSON completo."
+                )})
+                retry_text, retry_tokens = self._invoke(client, messages)
+                tokens += retry_tokens
+                retry_parsed = self._parse_json(retry_text)
+                ok2, reason2 = validate(retry_parsed)
+                if ok2:
+                    parsed, text = retry_parsed, retry_text
+                else:
+                    parsed["fix_sugerido"] = None
+                    parsed["recomendaciones"] = list(parsed.get("recomendaciones", [])) + [
+                        f"No se pudo generar un fix automático válido tras reintento "
+                        f"({reason2}). Requiere revisión manual."
+                    ]
 
         return AgentResponse(
             agent=self.NOMBRE,
@@ -184,6 +204,17 @@ class AgentBase:
             tokens_used=tokens,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
+
+    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int]:
+        response = client.messages.create(
+            model=self.MODEL,
+            max_tokens=self.MAX_TOKENS,
+            system=self.SYSTEM_PROMPT,
+            messages=messages,
+        )
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        return text, tokens
 
     @staticmethod
     def _build_user_message(ticket: Ticket, context: SiteContext) -> str:
@@ -376,6 +407,56 @@ class SEOContextEnricher:
             "h1_count": h1_count,
             "content_excerpt": text[:500] if text else None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Server-side validation for auto-resolvable SEO fixes
+#
+# The LLM doesn't reliably follow the system prompt's exact-format mandate
+# (observed: it substitutes a literal "POST_ID" placeholder instead of the
+# real verified wp_post_id, or pipes several wp-cli commands together with
+# "|" — which the WPRepro Agent plugin's whitelist rejects outright). This
+# validates fix_sugerido deterministically; AgentBase.run() uses it to force
+# one corrective retry before ever staging a non-compliant fix.
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_CMD_CHARS_RE = re.compile(r"[;&|`$<>\r\n]")
+_PLACEHOLDER_RE = re.compile(r"\bPOST_ID\b|\{[^}]*post_id[^}]*\}|<[^>]*\bid\b[^>]*>", re.IGNORECASE)
+
+
+def _validate_seo_fix(
+    check_name: str, site_context: SiteContext, parsed: Dict[str, Any]
+) -> Tuple[bool, str]:
+    fix = parsed.get("fix_sugerido")
+
+    if check_name == "meta_desc":
+        if site_context.wp_post_id is None:
+            if not fix:
+                return True, ""
+            return False, "no hay wp_post_id verificado en el contexto; fix_sugerido debe ser null"
+        if not fix:
+            return False, "hay wp_post_id verificado pero fix_sugerido es null; debe generarse el comando"
+        if "\n" in fix.strip():
+            return False, "fix_sugerido debe ser una sola línea (un único comando wp-cli)"
+        if _FORBIDDEN_CMD_CHARS_RE.search(fix):
+            return False, "fix_sugerido contiene caracteres prohibidos (; & | ` $ < > o salto de línea)"
+        if _PLACEHOLDER_RE.search(fix):
+            return False, "fix_sugerido usa un placeholder (ej. POST_ID) en vez del wp_post_id real"
+        expected_prefix = f"wp post meta update {site_context.wp_post_id} _yoast_wpseo_metadesc"
+        if not fix.strip().lower().startswith(expected_prefix.lower()):
+            return False, f"fix_sugerido debe empezar exactamente con '{expected_prefix}'"
+        return True, ""
+
+    if check_name == "h1":
+        if not fix:
+            return True, ""
+        if _extract_wp_cli_commands(fix):
+            return False, "fix_sugerido para H1 no debe contener comandos wp-cli, solo un snippet PHP"
+        if "```" not in fix:
+            return False, "fix_sugerido para H1 debe incluir un snippet PHP dentro de un bloque ```php"
+        return True, ""
+
+    return True, ""
 
 
 # ---------------------------------------------------------------------------
@@ -763,11 +844,15 @@ class AgentOrchestrator:
                 f"Available scopes: {list(SCOPE_TO_AGENT.keys())}"
             )
 
-        if _is_auto_resolvable_seo_ticket(ticket) and site_context.url:
-            enrichment = SEOContextEnricher.enrich(site_context.url)
-            site_context = site_context.model_copy(update=enrichment)
+        check_name = _seo_check_name(ticket)
+        validate = None
+        if check_name in AUTO_RESOLVABLE_SEO_CHECKS:
+            if site_context.url:
+                enrichment = SEOContextEnricher.enrich(site_context.url)
+                site_context = site_context.model_copy(update=enrichment)
+            validate = lambda parsed: _validate_seo_fix(check_name, site_context, parsed)  # noqa: E731
 
-        response = agent.run(ticket, site_context, historial or [])
+        response = agent.run(ticket, site_context, historial or [], validate=validate)
         _build_pending_fix(response, ticket, site_context)
         AgentHistoryStore.append(response)
         return response
