@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +34,7 @@ class ProjectStore:
             plan=req.plan,
             notas=req.notas,
             status=ProjectStatus.DRAFT,
+            wprepro_api_key=secrets.token_urlsafe(32),
             created_at=now,
             updated_at=now,
         )
@@ -46,12 +49,19 @@ class ProjectStore:
     @classmethod
     def get(cls, project_id: str) -> Optional[ProjectRecord]:
         if project_id in _projects:
-            return _projects[project_id]
-        path = cls._path(project_id)
-        if not path.exists():
-            return None
-        record = ProjectRecord(**json.loads(path.read_text(encoding="utf-8")))
-        _projects[project_id] = record
+            record = _projects[project_id]
+        else:
+            path = cls._path(project_id)
+            if not path.exists():
+                return None
+            record = ProjectRecord(**json.loads(path.read_text(encoding="utf-8")))
+            _projects[project_id] = record
+
+        # Backfill: projects created before per-project keys existed.
+        if not record.wprepro_api_key:
+            record.wprepro_api_key = secrets.token_urlsafe(32)
+            cls.save(record)
+
         return record
 
     @classmethod
@@ -76,3 +86,16 @@ class ProjectStore:
                 pass
         records.update(_projects)
         return sorted(records.values(), key=lambda p: p.created_at, reverse=True)
+
+
+def resolve_api_key(project_id: Optional[str]) -> str:
+    """
+    Per-project WPRepro Agent key when `project_id` is known; falls back to
+    the legacy global WPREPRO_API_KEY env var for ad-hoc flows that aren't
+    tied to a project record (e.g. the Dashboard's standalone Run Audit).
+    """
+    if project_id:
+        record = ProjectStore.get(project_id)
+        if record and record.wprepro_api_key:
+            return record.wprepro_api_key
+    return os.getenv("WPREPRO_API_KEY", "")

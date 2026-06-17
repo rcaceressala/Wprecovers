@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, X, RefreshCw, FolderKanban, ExternalLink, Wand2,
   CheckCircle2, Circle, XCircle, Download, ClipboardCheck, Lock, Trash2,
+  Copy, Check, KeyRound, Eye,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -27,6 +28,8 @@ interface Project {
   improvement_points?: number | null
   guarantee_met?: boolean | null
   created_at?: string
+  /** Only present in the response right after POST /projects/ (creation). */
+  wprepro_api_key?: string
 }
 
 interface VerifyUrlResult {
@@ -212,6 +215,49 @@ function SectionCard({
 }
 
 // ---------------------------------------------------------------------------
+// WPRepro Agent key — reveal + copy panel
+// ---------------------------------------------------------------------------
+function WpreproKeyPanel({ apiKey }: { apiKey: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(apiKey)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard API unavailable (e.g. insecure context) — user can still select+copy manually.
+    }
+  }
+
+  return (
+    <div className="bg-s2 border border-border rounded-lg p-3 space-y-2.5">
+      <div className="flex items-center gap-2">
+        <code className="flex-1 text-xs font-mono text-dim break-all bg-bg rounded px-2.5 py-2">
+          {apiKey}
+        </code>
+        <button
+          type="button"
+          className="btn-ghost border border-border flex items-center gap-1.5 flex-shrink-0"
+          onClick={copy}
+        >
+          {copied
+            ? <><Check className="w-3.5 h-3.5 text-success" /> Copiado</>
+            : <><Copy className="w-3.5 h-3.5" /> Copiar</>}
+        </button>
+      </div>
+      <p className="text-xs text-dim">
+        Pega esto en <code className="text-[11px]">wp-config.php</code> del sitio del cliente, antes
+        de <code className="text-[11px]">/* That&apos;s all, stop editing! */</code>:
+      </p>
+      <pre className="bg-bg rounded p-2 text-[11px] text-dim overflow-x-auto">
+        {`define( 'WPREPRO_API_KEY', '${apiKey}' );`}
+      </pre>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Create project modal (con checklist de onboarding integrado)
 // ---------------------------------------------------------------------------
 function CreateProjectModal({
@@ -227,6 +273,7 @@ function CreateProjectModal({
   const [verifying,    setVerifying]    = useState(false)
   const [verifyResult, setVerifyResult] = useState<VerifyUrlResult | null>(null)
   const [verifyError,  setVerifyError]  = useState<string | null>(null)
+  const [createdProject, setCreatedProject] = useState<Project | null>(null)
 
   const { done, total, percent } = useMemo(() => {
     let d = 0, t = 0
@@ -276,12 +323,45 @@ function CreateProjectModal({
         }),
       })
       onCreated(created)
-      onClose()
+      if (created.wprepro_api_key) {
+        setCreatedProject(created)
+      } else {
+        onClose()
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error al crear el proyecto')
     } finally {
       setSaving(false)
     }
+  }
+
+  if (createdProject?.wprepro_api_key) {
+    return (
+      <ModalShell title="Proyecto creado" onClose={onClose}>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 bg-success/10 border border-success/30 text-success
+                          text-sm font-medium rounded-lg px-3 py-2">
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> &quot;{createdProject.client_name}&quot; creado correctamente
+          </div>
+
+          <div>
+            <label className="text-xs text-muted flex items-center gap-1.5 mb-1.5">
+              <KeyRound className="w-3.5 h-3.5" /> Clave WPRepro Agent de este proyecto
+            </label>
+            <WpreproKeyPanel apiKey={createdProject.wprepro_api_key} />
+          </div>
+
+          <p className="text-xs text-muted">
+            Esta clave es única para este proyecto. Si la pierdes, puedes volver a verla desde la
+            tarjeta del proyecto.
+          </p>
+
+          <div className="flex justify-end pt-2 border-t border-border">
+            <button className="btn-primary" onClick={onClose}>Listo</button>
+          </div>
+        </div>
+      </ModalShell>
+    )
   }
 
   return (
@@ -423,6 +503,21 @@ function ProjectDetailModal({
 }: { project: Project; onClose: () => void; onUpdated: (p: Project) => void }) {
   const [busy,  setBusy]  = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [revealedKey, setRevealedKey] = useState<string | null>(null)
+  const [revealingKey, setRevealingKey] = useState(false)
+
+  const revealKey = async () => {
+    setRevealingKey(true)
+    setError(null)
+    try {
+      const data = await api.getProjectApiKey(project.id)
+      setRevealedKey(data.wprepro_api_key)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al obtener la clave de API')
+    } finally {
+      setRevealingKey(false)
+    }
+  }
 
   const captureBaseline = async () => {
     setBusy(true)
@@ -481,6 +576,29 @@ function ProjectDetailModal({
         {project.notas && (
           <p className="text-sm text-dim bg-s2 border border-border rounded-lg p-3">{project.notas}</p>
         )}
+
+        {/* WPRepro Agent key */}
+        <div>
+          {revealedKey ? (
+            <>
+              <label className="text-xs text-muted flex items-center gap-1.5 mb-1.5">
+                <KeyRound className="w-3.5 h-3.5" /> Clave WPRepro Agent
+              </label>
+              <WpreproKeyPanel apiKey={revealedKey} />
+            </>
+          ) : (
+            <button
+              type="button"
+              className="text-xs text-accent flex items-center gap-1.5 hover:underline disabled:opacity-50"
+              onClick={revealKey}
+              disabled={revealingKey}
+            >
+              {revealingKey
+                ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Cargando…</>
+                : <><Eye className="w-3.5 h-3.5" /> Ver clave de API</>}
+            </button>
+          )}
+        </div>
 
         {/* Scores antes/después */}
         <div className="grid grid-cols-2 gap-3">

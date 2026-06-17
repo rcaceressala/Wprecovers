@@ -267,6 +267,7 @@ class SiteContext(BaseModel):
     pagespeed_score: Optional[float] = None
     sector: Optional[str] = None
     notas: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class PendingFix(BaseModel):
@@ -277,6 +278,7 @@ class PendingFix(BaseModel):
     wp_cli_commands: List[str] = Field(default_factory=list)
     php_snippet: Optional[str] = None
     site_url: str
+    project_id: Optional[str] = None
     snippet_id: Optional[int] = None
     snippet_status: Optional[str] = None
     auto_approve: bool = False
@@ -379,8 +381,37 @@ class ProjectRecord(BaseModel):
     guarantee_met: Optional[bool] = None
     checks_before: Optional[Dict[str, Dict[str, bool]]] = None
     pagespeed_before: Optional[float] = None
+    wprepro_api_key: Optional[str] = None
     created_at: str
     updated_at: str
+
+
+class ProjectPublic(BaseModel):
+    """ProjectRecord without wprepro_api_key — safe for list/detail views."""
+    id: str
+    client_name: str
+    site_url: str
+    plan: Literal["starter", "growth", "scale", "elite"]
+    notas: Optional[str] = None
+    status: ProjectStatus = ProjectStatus.DRAFT
+    score_before: Optional[float] = None
+    score_after: Optional[float] = None
+    improvement_points: Optional[float] = None
+    improvement_pct: Optional[float] = None
+    guarantee_met: Optional[bool] = None
+    checks_before: Optional[Dict[str, Dict[str, bool]]] = None
+    pagespeed_before: Optional[float] = None
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_record(cls, record: "ProjectRecord") -> "ProjectPublic":
+        return cls(**record.model_dump(exclude={"wprepro_api_key"}))
+
+
+class WpreproKeyResponse(BaseModel):
+    project_id: str
+    wprepro_api_key: str
 
 
 class VerifyUrlRequest(BaseModel):

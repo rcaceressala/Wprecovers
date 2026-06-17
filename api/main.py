@@ -23,6 +23,7 @@ from models import (
     FixApplyRequest,
     Prioridad,
     ProjectCreateRequest,
+    ProjectPublic,
     ProjectRecord,
     ProjectStatus,
     ReportRequest,
@@ -34,6 +35,7 @@ from models import (
     ValidateInput,
     VerifyUrlRequest,
     VerifyUrlResult,
+    WpreproKeyResponse,
 )
 
 
@@ -43,7 +45,7 @@ from agents_engine import AgentHistoryStore, AgentOrchestrator, PendingFixStore,
 from audit_engine import run_full_audit, verify_url
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
-from project_engine import ProjectStore
+from project_engine import ProjectStore, resolve_api_key
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
 from report_engine import GuaranteeEvaluator, ReportStore, build_full_report
 from ticket_engine import generate_tickets
@@ -564,7 +566,7 @@ def approve_fix(ticket_id: str):
             detail=f"El ticket '{ticket_id}' no tiene 'site_url' definido. "
                    f"No se puede determinar a qué sitio aplicar el fix.",
         )
-    api_key = os.getenv("WPREPRO_API_KEY", "")
+    api_key = resolve_api_key(record.get("project_id"))
     client = WPAgentClient(site_url, api_key)
 
     try:
@@ -602,7 +604,7 @@ def reject_fix(ticket_id: str):
 
     if record.get("snippet_id") is not None:
         site_url = record.get("site_url")
-        api_key = os.getenv("WPREPRO_API_KEY", "")
+        api_key = resolve_api_key(record.get("project_id"))
         if site_url:
             try:
                 client = WPAgentClient(site_url, api_key)
@@ -749,23 +751,37 @@ def create_project(req: ProjectCreateRequest):
 @app.get("/projects/", tags=["M9 Projects"])
 def list_projects():
     """
-    List all projects, most recently created first.
+    List all projects, most recently created first. Excludes wprepro_api_key
+    — use GET /projects/{id}/wprepro-key to reveal a project's key.
     """
-    return {"projects": ProjectStore.list_all()}
+    return {"projects": [ProjectPublic.from_record(p) for p in ProjectStore.list_all()]}
 
 
-@app.get("/projects/{project_id}", response_model=ProjectRecord, tags=["M9 Projects"])
+@app.get("/projects/{project_id}", response_model=ProjectPublic, tags=["M9 Projects"])
 def get_project(project_id: str):
     """
-    Return a single project record.
+    Return a single project record. Excludes wprepro_api_key — use
+    GET /projects/{id}/wprepro-key to reveal it.
     """
     record = ProjectStore.get(project_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
-    return record
+    return ProjectPublic.from_record(record)
 
 
-@app.post("/projects/{project_id}/audit-and-baseline", response_model=ProjectRecord, tags=["M9 Projects"])
+@app.get("/projects/{project_id}/wprepro-key", response_model=WpreproKeyResponse, tags=["M9 Projects"])
+def get_project_wprepro_key(project_id: str):
+    """
+    Reveal the project's WPRepro Agent key — the value to paste into that
+    site's wp-config.php as WPREPRO_API_KEY.
+    """
+    record = ProjectStore.get(project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
+    return WpreproKeyResponse(project_id=project_id, wprepro_api_key=record.wprepro_api_key)
+
+
+@app.post("/projects/{project_id}/audit-and-baseline", response_model=ProjectPublic, tags=["M9 Projects"])
 async def audit_and_baseline(project_id: str):
     """
     Run a fresh M1 audit on the project's site_url and capture it as the baseline.
@@ -793,10 +809,10 @@ async def audit_and_baseline(project_id: str):
     record.status = ProjectStatus.OPEN
     record.updated_at = datetime.now(timezone.utc).isoformat()
     ProjectStore.save(record)
-    return record
+    return ProjectPublic.from_record(record)
 
 
-@app.post("/projects/{project_id}/close", response_model=ProjectRecord, tags=["M9 Projects"])
+@app.post("/projects/{project_id}/close", response_model=ProjectPublic, tags=["M9 Projects"])
 async def close_project(project_id: str):
     """
     Run a final M1 audit, compare against the captured baseline, evaluate the
@@ -854,7 +870,7 @@ async def close_project(project_id: str):
     record.status = ProjectStatus.CLOSED
     record.updated_at = datetime.now(timezone.utc).isoformat()
     ProjectStore.save(record)
-    return record
+    return ProjectPublic.from_record(record)
 
 
 @app.delete("/projects/{project_id}", tags=["M9 Projects"])

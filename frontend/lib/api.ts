@@ -371,6 +371,9 @@ export const api = {
 
   deleteProject: (projectId: string) =>
     apiFetch<{ id: string; status: string }>(`/projects/${projectId}`, { method: 'DELETE' }),
+
+  getProjectApiKey: (projectId: string) =>
+    apiFetch<{ project_id: string; wprepro_api_key: string }>(`/projects/${projectId}/wprepro-key`),
 }
 
 // ---------------------------------------------------------------------------

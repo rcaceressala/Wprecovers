@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from models import AgentResponse, PendingFix, SiteContext, Ticket
+from project_engine import resolve_api_key
 from wp_agent_client import WPAgentClient
 
 AGENTS_DIR = Path(__file__).parent / "agents"
@@ -470,7 +471,7 @@ def _build_pending_fix(response: AgentResponse, ticket: Ticket, site_context: Si
         return
 
     site_url = site_context.url
-    api_key = os.getenv("WPREPRO_API_KEY", "")
+    api_key = resolve_api_key(site_context.project_id)
     auto_approve = os.getenv("FIX_AUTO_APPROVE", "false").strip().lower() == "true"
 
     record: Dict[str, Any] = {
@@ -481,6 +482,7 @@ def _build_pending_fix(response: AgentResponse, ticket: Ticket, site_context: Si
         "wp_cli_commands": commands,
         "php_snippet": php_snippet,
         "site_url": site_url,
+        "project_id": site_context.project_id,
         "snippet_id": None,
         "snippet_status": None,
         "auto_approve": auto_approve,
