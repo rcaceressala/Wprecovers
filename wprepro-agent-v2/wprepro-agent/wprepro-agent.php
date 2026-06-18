@@ -7,6 +7,8 @@
  * Author:      WPRecover Pro
  * License:     GPL-2.0+
  * Text Domain: wprepro-agent
+ * Requires at least: 6.0
+ * Requires PHP: 7.4
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
@@ -128,11 +130,29 @@ add_action( 'admin_notices', function () {
 // POST /execute-snippet {action:"activate"}.
 
 add_action( 'init', function () {
+    // capability_type/capabilities are pinned to manage_options so that
+    // only Administrators can create/edit/publish wprepro_fix posts from
+    // wp-admin. Without this, the default 'post' capability_type lets any
+    // Author+ role publish raw PHP here, which gets eval()'d on every
+    // `init` — a privilege-escalation path to RCE that bypasses the REST
+    // API's WPREPRO_API_KEY check entirely.
     register_post_type( 'wprepro_fix', [
-        'label'    => 'WPRepro Fixes',
-        'public'   => false,
-        'show_ui'  => true,
-        'supports' => [ 'title', 'editor' ],
+        'label'           => 'WPRepro Fixes',
+        'public'          => false,
+        'show_ui'         => true,
+        'supports'        => [ 'title', 'editor' ],
+        'capability_type' => 'wprepro_fix',
+        'map_meta_cap'    => true,
+        'capabilities'    => [
+            'edit_post'          => 'manage_options',
+            'read_post'          => 'manage_options',
+            'delete_post'        => 'manage_options',
+            'edit_posts'         => 'manage_options',
+            'edit_others_posts'  => 'manage_options',
+            'publish_posts'      => 'manage_options',
+            'read_private_posts' => 'manage_options',
+            'create_posts'       => 'manage_options',
+        ],
     ] );
 }, 10 );
 
@@ -540,10 +560,11 @@ function wprepro_route_execute( WP_REST_Request $request ): WP_REST_Response {
 
 /**
  * POST /wp-json/wprepro/v1/execute-snippet
- * Body: {"action": "create"|"activate"|"delete", ...}
- *   - create:   {ticket_id, title, code, auto_approve}
- *   - activate: {snippet_id}
- *   - delete:   {snippet_id}
+ * Body: {"action": "create"|"activate"|"deactivate"|"delete", ...}
+ *   - create:     {ticket_id, title, code, auto_approve}
+ *   - activate:   {snippet_id}
+ *   - deactivate: {snippet_id}
+ *   - delete:     {snippet_id}
  * Returns: {"snippet_id": int, "status": "active"|"inactive"|"deleted"}
  */
 function wprepro_route_execute_snippet( WP_REST_Request $request ): WP_REST_Response {
@@ -554,6 +575,8 @@ function wprepro_route_execute_snippet( WP_REST_Request $request ): WP_REST_Resp
         switch ( $action ) {
             case 'activate':
                 return wprepro_activate_fix_snippet( $body );
+            case 'deactivate':
+                return wprepro_deactivate_fix_snippet( $body );
             case 'delete':
                 return wprepro_delete_fix_snippet( $body );
             case 'create':
@@ -617,6 +640,22 @@ function wprepro_activate_fix_snippet( array $body ): WP_REST_Response {
     }
 
     return new WP_REST_Response( [ 'snippet_id' => $snippet_id, 'status' => 'active' ], 200 );
+}
+
+function wprepro_deactivate_fix_snippet( array $body ): WP_REST_Response {
+    $snippet_id = (int) ( $body['snippet_id'] ?? 0 );
+    $post       = $snippet_id ? get_post( $snippet_id ) : null;
+
+    if ( ! $post || $post->post_type !== 'wprepro_fix' ) {
+        return new WP_REST_Response( [ 'error' => "Fix #{$snippet_id} not found" ], 404 );
+    }
+
+    $result = wp_update_post( [ 'ID' => $snippet_id, 'post_status' => 'draft' ], true );
+    if ( is_wp_error( $result ) ) {
+        return new WP_REST_Response( [ 'error' => $result->get_error_message() ], 400 );
+    }
+
+    return new WP_REST_Response( [ 'snippet_id' => $snippet_id, 'status' => 'inactive' ], 200 );
 }
 
 function wprepro_delete_fix_snippet( array $body ): WP_REST_Response {

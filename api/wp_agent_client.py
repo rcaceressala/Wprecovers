@@ -30,7 +30,7 @@ class WPAgentClient:
             return r.json()
 
     def execute_snippet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """POST /wp-json/wprepro/v1/execute-snippet — create/activate/delete a fix snippet."""
+        """POST /wp-json/wprepro/v1/execute-snippet — create/activate/deactivate/delete a fix snippet."""
         url = f"{self.site_url}/wp-json/wprepro/v1/execute-snippet"
         with httpx.Client(timeout=TIMEOUT) as client:
             r = client.post(url, headers=self.headers, json=payload)

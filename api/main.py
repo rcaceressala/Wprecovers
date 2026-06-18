@@ -630,6 +630,56 @@ def reject_fix(ticket_id: str):
     return {"ticket_id": ticket_id, "status": "rejected"}
 
 
+@app.post("/fixes/rollback/{ticket_id}", tags=["M6 Agents"])
+def rollback_fix(ticket_id: str):
+    """
+    Undo an already-applied fix: deactivates its PHP snippet on WordPress (if any),
+    keeping the snippet stored for re-activation. WP-CLI-only fixes (no snippet)
+    have no generic inverse and must be reverted manually.
+    """
+    record = PendingFixStore.get(ticket_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No hay fix registrado para el ticket '{ticket_id}'")
+    if record.get("status") != "applied":
+        raise HTTPException(
+            status_code=400,
+            detail=f"El fix del ticket '{ticket_id}' no está aplicado (status={record.get('status')}), no hay nada que revertir",
+        )
+
+    site_url = record.get("site_url")
+    if not site_url:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El ticket '{ticket_id}' no tiene 'site_url' definido. "
+                   f"No se puede determinar a qué sitio revertir el fix.",
+        )
+    api_key = resolve_api_key(record.get("project_id"))
+    client = WPAgentClient(site_url, api_key)
+
+    try:
+        results = {}
+        if record.get("snippet_id") is not None:
+            data = client.execute_snippet({"action": "deactivate", "snippet_id": record["snippet_id"]})
+            record["snippet_status"] = data.get("status")
+            results["snippet"] = data
+        if record.get("wp_cli_commands") and record.get("snippet_id") is None:
+            results["warning"] = (
+                "Este fix se aplicó solo vía comandos WP-CLI sin snippet asociado; "
+                "no existe un comando inverso genérico y debe revertirse manualmente."
+            )
+
+        record["status"] = "rolled_back"
+        record["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+        record["rollback_results"] = results
+        record["error"] = None
+        PendingFixStore.save(ticket_id, record)
+        return record
+    except Exception as exc:
+        record["error"] = f"Error revirtiendo el fix: {exc}"
+        PendingFixStore.save(ticket_id, record)
+        raise HTTPException(status_code=502, detail=f"Error revirtiendo el fix: {exc}")
+
+
 @app.get("/fixes/pending/", tags=["M6 Agents"])
 def list_pending_fixes():
     """
