@@ -21,7 +21,7 @@ from audit_engine import run_full_audit
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
 
 _MODEL = "claude-sonnet-4-6"
-_MAX_TOKENS = 4096
+_MAX_TOKENS = 8192
 
 # ---------------------------------------------------------------------------
 # MarketingAgent — generates the 9-module plan via the Anthropic API
@@ -80,8 +80,24 @@ class MarketingAgent:
         user_msg = self._build_user_message(req, audit_context)
         messages = [{"role": "user", "content": user_msg}]
 
-        text, tokens = self._invoke(client, messages)
+        text, tokens, stop_reason = self._invoke(client, messages)
         parsed = self._parse_json(text)
+
+        required_keys = (
+            "diagnostico_inicial", "estrategia_adquisicion", "calendario_contenido",
+            "embudo_ventas", "estrategia_whatsapp", "plan_ejecucion_90_dias",
+            "ia_automatizacion", "metricas_clave", "top_10_acciones",
+        )
+        if not parsed or not all(parsed.get(k) for k in required_keys):
+            hint = (
+                "la respuesta se truncó por max_tokens — sube _MAX_TOKENS"
+                if stop_reason == "max_tokens"
+                else "la respuesta no es JSON válido o le faltan módulos"
+            )
+            raise RuntimeError(
+                f"MarketingAgent: no se pudo generar un plan completo ({hint}). "
+                f"stop_reason={stop_reason}, respuesta cruda (primeros 500 chars): {text[:500]!r}"
+            )
 
         plan = MarketingPlan(
             diagnostico_inicial=parsed.get("diagnostico_inicial", []),
@@ -100,7 +116,7 @@ class MarketingAgent:
         )
         return plan, tokens
 
-    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int]:
+    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, str]:
         response = client.messages.create(
             model=self.MODEL,
             max_tokens=_MAX_TOKENS,
@@ -109,7 +125,7 @@ class MarketingAgent:
         )
         text = next((b.text for b in response.content if b.type == "text"), "")
         tokens = response.usage.input_tokens + response.usage.output_tokens
-        return text, tokens
+        return text, tokens, response.stop_reason
 
     @staticmethod
     def _build_user_message(req: MarketingGenerateRequest, audit_context: str) -> str:
