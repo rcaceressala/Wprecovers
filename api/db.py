@@ -155,3 +155,15 @@ def init_db() -> None:
                     pdf_data BYTEA
                 )
             """)
+
+            # marketing_engine.py — MarketingPlanStore (metadata + PDF bytes)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS marketing_plans (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT,
+                    data JSONB NOT NULL,
+                    pdf_data BYTEA,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS marketing_plans_project_idx ON marketing_plans (project_id)")

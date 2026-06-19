@@ -1,0 +1,328 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import {
+  Megaphone, Sparkles, RefreshCw, AlertTriangle, Download,
+  ChevronDown, ChevronRight, Inbox,
+} from 'lucide-react'
+import {
+  api,
+  type MarketingPlanRecord, type MarketingGenerateRequest,
+  type MonthlyBudget, type WprecoverPlan, type ProjectSummary,
+} from '@/lib/api'
+
+const BUDGET_LABELS: Record<MonthlyBudget, string> = {
+  bajo: 'Bajo', medio: 'Medio', alto: 'Alto',
+}
+const PLAN_LABELS: Record<WprecoverPlan, string> = {
+  starter: 'Starter', growth: 'Growth', scale: 'Scale', elite: 'Elite',
+}
+
+// ---------------------------------------------------------------------------
+// Collapsible section
+// ---------------------------------------------------------------------------
+function Section({
+  title, defaultOpen = false, children,
+}: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="border border-border rounded-xl overflow-hidden">
+      <button
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-s2 transition-colors text-left"
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? <ChevronDown className="w-4 h-4 text-muted" /> : <ChevronRight className="w-4 h-4 text-muted" />}
+        <span className="font-medium text-sm flex-1">{title}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border bg-s2 px-4 py-4">
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BulletList({ items }: { items: string[] }) {
+  return (
+    <ol className="space-y-2">
+      {items.map((item, i) => (
+        <li key={i} className="flex gap-2.5 text-sm text-dim">
+          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-s3 text-xs font-mono
+                           flex items-center justify-center text-muted">{i + 1}</span>
+          <span>{item}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Plan display — 9 modules
+// ---------------------------------------------------------------------------
+function PlanSections({ plan }: { plan: MarketingPlanRecord['plan'] }) {
+  return (
+    <div className="space-y-2">
+      <Section title="1. Diagnóstico Inicial" defaultOpen>
+        <BulletList items={plan.diagnostico_inicial} />
+      </Section>
+
+      <Section title="2. Estrategia de Adquisición">
+        <BulletList items={plan.estrategia_adquisicion} />
+      </Section>
+
+      <Section title="3. Calendario de Contenido (30 días)">
+        <div className="space-y-3">
+          {plan.calendario_contenido.map((item, i) => (
+            <div key={i} className="bg-surface border border-border rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-xs font-mono text-accent">Día {item.dia}</span>
+                <span className="text-[10px] text-muted bg-s3 rounded px-1.5 py-0.5">{item.formato}</span>
+                <span className="text-xs text-dim font-medium ml-1">{item.objetivo}</span>
+              </div>
+              <p className="text-sm text-dim mb-1.5">{item.guion}</p>
+              <p className="text-xs text-muted italic">CTA: {item.cta}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="4. Embudo de Ventas">
+        <BulletList items={plan.embudo_ventas} />
+      </Section>
+
+      <Section title="5. Estrategia WhatsApp">
+        <BulletList items={plan.estrategia_whatsapp} />
+      </Section>
+
+      <Section title="6. Plan de Ejecución (90 días)">
+        <div className="space-y-4">
+          {([
+            ['Semana 1-2', plan.plan_ejecucion_90_dias.semana_1_2],
+            ['Semana 3-4', plan.plan_ejecucion_90_dias.semana_3_4],
+            ['Mes 2', plan.plan_ejecucion_90_dias.mes_2],
+            ['Mes 3', plan.plan_ejecucion_90_dias.mes_3],
+          ] as [string, string[]][]).map(([label, items]) => (
+            <div key={label}>
+              <p className="text-[10px] text-muted font-mono uppercase tracking-wide mb-2">{label}</p>
+              <BulletList items={items} />
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="7. IA y Automatización">
+        <BulletList items={plan.ia_automatizacion} />
+      </Section>
+
+      <Section title="8. Métricas Clave">
+        <BulletList items={plan.metricas_clave} />
+      </Section>
+
+      <Section title="9. Top 10 Acciones Inmediatas" defaultOpen>
+        <BulletList items={plan.top_10_acciones} />
+      </Section>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+export default function MarketingPage() {
+  const [projects, setProjects] = useState<ProjectSummary[]>([])
+
+  const [siteUrl,   setSiteUrl]   = useState('https://demo.wprecover.cl')
+  const [bizType,   setBizType]   = useState('tienda WooCommerce')
+  const [city,      setCity]      = useState('Santiago')
+  const [budget,    setBudget]    = useState<MonthlyBudget>('medio')
+  const [plan,      setPlan]      = useState<WprecoverPlan>('growth')
+  const [projectId, setProjectId] = useState<string>('')
+
+  const [generating, setGenerating] = useState(false)
+  const [error,       setError]     = useState<string | null>(null)
+  const [result,      setResult]    = useState<MarketingPlanRecord | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => {
+    api.listProjects().then(res => setProjects(res.projects)).catch(() => {})
+  }, [])
+
+  const handleProjectSelect = (id: string) => {
+    setProjectId(id)
+    const project = projects.find(p => p.id === id)
+    if (project) {
+      setSiteUrl(project.site_url)
+      setPlan(project.plan as WprecoverPlan)
+    }
+  }
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    setError(null)
+    setResult(null)
+    try {
+      const req: MarketingGenerateRequest = {
+        site_url: siteUrl,
+        business_type: bizType,
+        city,
+        monthly_budget: budget,
+        plan,
+        project_id: projectId || undefined,
+      }
+      const record = await api.generateMarketingPlan(req)
+      setResult(record)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al generar el plan de marketing')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleDownload = async () => {
+    if (!result) return
+    setDownloading(true)
+    try {
+      const blob = await api.downloadMarketingPDF(result.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `marketing-plan-${result.id}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al descargar el PDF')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <Megaphone className="w-5 h-5 text-accent" /> Marketing OS
+          </h1>
+          <p className="text-dim text-sm mt-0.5">
+            Plan de marketing personalizado en 9 módulos, generado con IA a partir del diagnóstico real del sitio.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                        text-sm rounded-lg px-4 py-3 mb-5">
+          <AlertTriangle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-6">
+        {/* Left: form */}
+        <div className="card self-start">
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles className="w-4 h-4 text-accent" />
+            <h2 className="font-medium text-sm">Datos del Cliente</h2>
+          </div>
+
+          <div className="space-y-3 mb-4">
+            <div>
+              <label className="text-xs text-muted mb-1 block">Proyecto (opcional)</label>
+              <select className="select" value={projectId} onChange={e => handleProjectSelect(e.target.value)}>
+                <option value="">Sin proyecto asociado</option>
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.client_name} — {p.site_url}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted mb-1 block">URL del sitio</label>
+              <input className="input" value={siteUrl}
+                onChange={e => setSiteUrl(e.target.value)}
+                placeholder="https://tusitio.cl" />
+            </div>
+            <div>
+              <label className="text-xs text-muted mb-1 block">Rubro / tipo de negocio</label>
+              <input className="input" value={bizType}
+                onChange={e => setBizType(e.target.value)}
+                placeholder="tienda WooCommerce / servicios / otro" />
+            </div>
+            <div>
+              <label className="text-xs text-muted mb-1 block">Ciudad</label>
+              <input className="input" value={city}
+                onChange={e => setCity(e.target.value)}
+                placeholder="Santiago" />
+            </div>
+            <div>
+              <label className="text-xs text-muted mb-1 block">Presupuesto mensual</label>
+              <select className="select" value={budget} onChange={e => setBudget(e.target.value as MonthlyBudget)}>
+                {Object.entries(BUDGET_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted mb-1 block">Paquete WPRecover</label>
+              <select className="select" value={plan} onChange={e => setPlan(e.target.value as WprecoverPlan)}>
+                {Object.entries(PLAN_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <button
+            className="btn-primary flex items-center gap-2 w-full justify-center"
+            onClick={handleGenerate}
+            disabled={generating || !siteUrl}
+          >
+            {generating
+              ? <><RefreshCw className="w-4 h-4 animate-spin" /> Auditando sitio y consultando Claude…</>
+              : <><Sparkles className="w-4 h-4" /> Generar Plan de Marketing</>}
+          </button>
+        </div>
+
+        {/* Right: result */}
+        <div className="space-y-4">
+          {result && (
+            <>
+              <div className="card flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-[#e2e8f0]">Plan generado</p>
+                  <p className="text-xs text-muted mt-0.5">
+                    {result.request.site_url} · Recovery Score:{' '}
+                    {result.recovery_score != null ? result.recovery_score.toFixed(1) : 'N/A'} ·{' '}
+                    {result.created_at.slice(0, 16).replace('T', ' ')}
+                  </p>
+                </div>
+                <button
+                  className="btn-ghost border border-border flex items-center gap-2"
+                  onClick={handleDownload}
+                  disabled={downloading || !result.pdf_available}
+                  title={!result.pdf_available ? 'PDF no disponible' : undefined}
+                >
+                  {downloading
+                    ? <RefreshCw className="w-4 h-4 animate-spin" />
+                    : <Download className="w-4 h-4" />}
+                  Descargar PDF
+                </button>
+              </div>
+
+              <PlanSections plan={result.plan} />
+            </>
+          )}
+
+          {!result && !generating && (
+            <div className="flex flex-col items-center py-16 gap-3 text-center">
+              <Inbox className="w-8 h-8 text-muted" />
+              <p className="text-dim text-sm">Sin plan generado todavía.</p>
+              <p className="text-xs text-muted">Completa el formulario y genera el plan de marketing.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}

@@ -5,6 +5,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env", override=True)
@@ -21,6 +22,7 @@ from models import (
     BatchRunRequest,
     CheckoutRequest,
     FixApplyRequest,
+    MarketingGenerateRequest,
     Prioridad,
     ProjectCreateRequest,
     ProjectPublic,
@@ -46,6 +48,7 @@ from audit_engine import run_full_audit, verify_url
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
 from db import init_db
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
+from marketing_engine import MarketingPlanStore, generate_marketing_plan
 from project_engine import ProjectStore, resolve_api_key
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
 from report_engine import GuaranteeEvaluator, ReportStore, build_full_report
@@ -86,6 +89,7 @@ def health():
         "M5 — Reportes Ejecutivos",
         "M6 — Agentes IA",
         "M8 — Billing",
+        "M10 — Marketing OS",
     ]}
 
 
@@ -947,3 +951,64 @@ def delete_project(project_id: str):
         raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
     ProjectStore.delete(project_id)
     return {"id": project_id, "status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# M10 — Marketing OS
+# ---------------------------------------------------------------------------
+
+@app.post("/marketing/generate", tags=["M10 Marketing OS"])
+async def marketing_generate(req: MarketingGenerateRequest):
+    """
+    Generate a complete 9-module marketing plan for a client, personalized
+    with a live M1 audit of their site (Recovery Score, PageSpeed, failed
+    checks) plus their business type, city, budget and contracted plan.
+
+    Requires ANTHROPIC_API_KEY environment variable.
+    """
+    try:
+        record = await generate_marketing_plan(req)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Marketing plan generation failed: {e}")
+    return record
+
+
+@app.get("/marketing/{plan_id}", tags=["M10 Marketing OS"])
+def get_marketing_plan(plan_id: str):
+    record = MarketingPlanStore.load(plan_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No marketing plan found with id '{plan_id}'")
+    return record
+
+
+@app.get("/marketing/", tags=["M10 Marketing OS"])
+def list_marketing_plans(project_id: Optional[str] = None):
+    return {"plans": MarketingPlanStore.list_all(project_id)}
+
+
+@app.get("/marketing/download/{plan_id}", tags=["M10 Marketing OS"])
+def download_marketing_pdf(plan_id: str):
+    """
+    Download the PDF for a marketing plan.
+    Returns 404 if the PDF was not generated (reportlab not installed).
+    """
+    record = MarketingPlanStore.load(plan_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No marketing plan found with id '{plan_id}'")
+    if not record.pdf_available:
+        raise HTTPException(status_code=404, detail="PDF not available — install reportlab to enable PDF generation")
+
+    filename = f"{plan_id}.pdf"
+
+    pdf_bytes = MarketingPlanStore.load_pdf_bytes(plan_id)
+    if pdf_bytes is not None:
+        return Response(content=pdf_bytes, media_type="application/pdf", headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        })
+
+    pdf_path = Path(__file__).parent / "marketing_plans" / filename
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+    return FileResponse(str(pdf_path), media_type="application/pdf", filename=filename)

@@ -226,6 +226,68 @@ export interface ProjectDetail extends ProjectSummary {
 export type CloseProjectResult = ProjectDetail
 
 // ---------------------------------------------------------------------------
+// M10 — Marketing OS
+// ---------------------------------------------------------------------------
+
+export type MonthlyBudget = 'bajo' | 'medio' | 'alto'
+export type WprecoverPlan = 'starter' | 'growth' | 'scale' | 'elite'
+
+export interface MarketingGenerateRequest {
+  site_url: string
+  business_type: string
+  city: string
+  monthly_budget: MonthlyBudget
+  plan: WprecoverPlan
+  project_id?: string | null
+}
+
+export interface ContentCalendarItem {
+  dia: number
+  objetivo: string
+  formato: string
+  guion: string
+  cta: string
+}
+
+export interface Plan90Dias {
+  semana_1_2: string[]
+  semana_3_4: string[]
+  mes_2: string[]
+  mes_3: string[]
+}
+
+export interface MarketingPlan {
+  diagnostico_inicial: string[]
+  estrategia_adquisicion: string[]
+  calendario_contenido: ContentCalendarItem[]
+  embudo_ventas: string[]
+  estrategia_whatsapp: string[]
+  plan_ejecucion_90_dias: Plan90Dias
+  ia_automatizacion: string[]
+  metricas_clave: string[]
+  top_10_acciones: string[]
+}
+
+export interface MarketingPlanRecord {
+  id: string
+  request: MarketingGenerateRequest
+  plan: MarketingPlan
+  recovery_score: number | null
+  pagespeed_score: number | null
+  pdf_available: boolean
+  created_at: string
+}
+
+export interface MarketingPlanSummary {
+  id: string
+  site_url: string
+  project_id: string | null
+  recovery_score: number | null
+  pdf_available: boolean
+  created_at: string
+}
+
+// ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
 
@@ -374,6 +436,30 @@ export const api = {
 
   getProjectApiKey: (projectId: string) =>
     apiFetch<{ project_id: string; wprepro_api_key: string }>(`/projects/${projectId}/wprepro-key`),
+
+  // M10 — Marketing OS
+  generateMarketingPlan: (req: MarketingGenerateRequest) =>
+    apiFetch<MarketingPlanRecord>('/marketing/generate', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  getMarketingPlan: (planId: string) =>
+    apiFetch<MarketingPlanRecord>(`/marketing/${planId}`),
+
+  listMarketingPlans: (projectId?: string) =>
+    apiFetch<{ plans: MarketingPlanSummary[] }>(
+      projectId ? `/marketing/?project_id=${encodeURIComponent(projectId)}` : '/marketing/'
+    ),
+
+  downloadMarketingPDF: async (planId: string): Promise<Blob> => {
+    const res = await fetch(`${BASE}/marketing/download/${planId}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`)
+    }
+    return res.blob()
+  },
 }
 
 // ---------------------------------------------------------------------------

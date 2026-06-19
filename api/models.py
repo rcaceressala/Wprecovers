@@ -430,3 +430,53 @@ class VerifyUrlResult(BaseModel):
     readme_exposed: bool
     wordpress_detected: bool
     wp_version: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# M10 — Marketing OS
+# ---------------------------------------------------------------------------
+
+class MarketingGenerateRequest(BaseModel):
+    site_url: str
+    business_type: str = Field(..., description="tienda WooCommerce / servicios / otro")
+    city: str
+    monthly_budget: Literal["bajo", "medio", "alto"]
+    plan: Literal["starter", "growth", "scale", "elite"]
+    project_id: Optional[str] = None
+
+
+class ContentCalendarItem(BaseModel):
+    dia: int
+    objetivo: str
+    formato: str
+    guion: str
+    cta: str
+
+
+class Plan90Dias(BaseModel):
+    semana_1_2: List[str]
+    semana_3_4: List[str]
+    mes_2: List[str]
+    mes_3: List[str]
+
+
+class MarketingPlan(BaseModel):
+    diagnostico_inicial: List[str]
+    estrategia_adquisicion: List[str]
+    calendario_contenido: List[ContentCalendarItem]
+    embudo_ventas: List[str]
+    estrategia_whatsapp: List[str]
+    plan_ejecucion_90_dias: Plan90Dias
+    ia_automatizacion: List[str]
+    metricas_clave: List[str]
+    top_10_acciones: List[str]
+
+
+class MarketingPlanRecord(BaseModel):
+    id: str
+    request: MarketingGenerateRequest
+    plan: MarketingPlan
+    recovery_score: Optional[float] = None
+    pagespeed_score: Optional[float] = None
+    pdf_available: bool = False
+    created_at: str
