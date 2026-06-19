@@ -25,6 +25,14 @@ CONTENT_DIR = Path(__file__).parent / "content_pieces"
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 32000
+# El SDK de anthropic usa por defecto 600s de read timeout. Generar 8 piezas de
+# contenido con max_tokens=32000 puede superar ese límite bajo carga, así que lo
+# subimos explícitamente (con margen sobre el mínimo de 120s pedido).
+_CLIENT_TIMEOUT = 900.0
+
+
+def _anthropic_client(_anthropic: Any) -> Any:
+    return _anthropic.Anthropic(timeout=_CLIENT_TIMEOUT)
 
 # ---------------------------------------------------------------------------
 # MarketingAgent — generates the 9-module plan via the Anthropic API
@@ -79,7 +87,7 @@ class MarketingAgent:
                 "anthropic package not installed. Run: pip install 'anthropic>=0.40.0'"
             ) from exc
 
-        client = _anthropic.Anthropic()
+        client = _anthropic_client(_anthropic)
         user_msg = self._build_user_message(req, audit_context)
         messages = [{"role": "user", "content": user_msg}]
 
@@ -209,7 +217,7 @@ class ContentAgent:
                 "anthropic package not installed. Run: pip install 'anthropic>=0.40.0'"
             ) from exc
 
-        client = _anthropic.Anthropic()
+        client = _anthropic_client(_anthropic)
         user_msg = self._build_user_message(req, calendario)
         messages = [{"role": "user", "content": user_msg}]
 
