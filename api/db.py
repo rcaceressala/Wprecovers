@@ -167,3 +167,12 @@ def init_db() -> None:
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS marketing_plans_project_idx ON marketing_plans (project_id)")
+
+            # marketing_engine.py — ContentPieceStore (Módulo 3 ejecutado: 8 piezas reales por plan)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS content_pieces (
+                    plan_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)

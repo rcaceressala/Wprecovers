@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import db
 from models import (
     ContentCalendarItem,
+    ContentPiece,
+    ContentPiecesRecord,
     MarketingGenerateRequest,
     MarketingPlan,
     MarketingPlanRecord,
@@ -19,6 +21,7 @@ from models import (
 from audit_engine import run_full_audit
 
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
+CONTENT_DIR = Path(__file__).parent / "content_pieces"
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 32000
@@ -157,6 +160,190 @@ class MarketingAgent:
             except Exception:
                 pass
         return {}
+
+
+_CONTENT_JSON_SCHEMA = """\
+Responde ÚNICAMENTE con este JSON (sin texto adicional, sin bloques markdown):
+{
+  "piezas": [
+    {
+      "dia": 1,
+      "formato": "Reel|Post|Historia|Blog|Email",
+      "objetivo": "...",
+      "texto_completo": "texto final del post/guion, listo para publicar, en español neutro LATAM...",
+      "prompt_imagen": "prompt detallado para generar la imagen/portada con IA (estilo, composición, colores)...",
+      "hashtags": ["#hashtag1", "#hashtag2", "..."],
+      "mejor_horario": "Día de la semana + hora sugerida, ej. 'Martes 18:00'"
+    },
+    "... una entrada por cada pieza del calendario recibido, mismo orden, mismo número de piezas ..."
+  ]
+}"""
+
+_CONTENT_SYSTEM_PROMPT = f"""Eres ContentAgent, redactor senior de contenido para redes sociales de PYMEs LATAM
+dentro de WPRecover 2.0. Tu trabajo es tomar el Calendario de Contenido (Módulo 3) de un plan de marketing
+ya aprobado y producir el contenido REAL, listo para publicar, para cada una de sus piezas.
+
+PRINCIPIOS:
+- No describas la pieza, escríbela completa: el texto_completo debe ser el post/guion final, no un resumen.
+- El prompt_imagen debe ser específico y usable directamente en un generador de imágenes (estilo visual,
+  encuadre, colores, elementos), coherente con el rubro y la ciudad del cliente.
+- Los hashtags deben ser relevantes al rubro, la ciudad y el formato — mezcla genéricos y de nicho.
+- mejor_horario debe ser una recomendación concreta (día + hora), no una franja vaga.
+- Respeta el objetivo, formato y CTA ya definidos en cada pieza del calendario original.
+- Todo el contenido debe estar en español neutro LATAM.
+
+{_CONTENT_JSON_SCHEMA}"""
+
+
+class ContentAgent:
+    NOMBRE = "ContentAgent"
+    MODEL = _MODEL
+
+    def run(
+        self, req: MarketingGenerateRequest, calendario: List[ContentCalendarItem]
+    ) -> Tuple[List[ContentPiece], int]:
+        try:
+            import anthropic as _anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic package not installed. Run: pip install 'anthropic>=0.40.0'"
+            ) from exc
+
+        client = _anthropic.Anthropic()
+        user_msg = self._build_user_message(req, calendario)
+        messages = [{"role": "user", "content": user_msg}]
+
+        text, tokens, stop_reason = self._invoke(client, messages)
+        parsed = self._parse_json(text)
+        piezas = parsed.get("piezas") if parsed else None
+
+        if not piezas or len(piezas) != len(calendario):
+            hint = (
+                "la respuesta se truncó por max_tokens — sube _MAX_TOKENS"
+                if stop_reason == "max_tokens"
+                else "la respuesta no es JSON válido o no tiene una pieza por cada día del calendario"
+            )
+            raise RuntimeError(
+                f"ContentAgent: no se pudo generar el contenido completo ({hint}). "
+                f"stop_reason={stop_reason}, respuesta cruda (primeros 500 chars): {text[:500]!r}"
+            )
+
+        pieces = [ContentPiece(**item) for item in piezas]
+        return pieces, tokens
+
+    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, str]:
+        with client.messages.stream(
+            model=self.MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=_CONTENT_SYSTEM_PROMPT,
+            messages=messages,
+        ) as stream:
+            response = stream.get_final_message()
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        return text, tokens, response.stop_reason
+
+    @staticmethod
+    def _build_user_message(req: MarketingGenerateRequest, calendario: List[ContentCalendarItem]) -> str:
+        calendario_text = "\n".join(
+            f"- Día {item.dia} | {item.formato} | Objetivo: {item.objetivo} | "
+            f"Guion original: {item.guion} | CTA: {item.cta}"
+            for item in calendario
+        )
+        return (
+            f"DATOS DEL CLIENTE:\n"
+            f"Sitio: {req.site_url}\n"
+            f"Rubro: {req.business_type}\n"
+            f"Ciudad: {req.city}\n\n"
+            f"CALENDARIO DE CONTENIDO A EJECUTAR ({len(calendario)} piezas):\n"
+            f"{calendario_text}\n\n"
+            "Genera el contenido real de cada pieza siguiendo exactamente el esquema indicado, "
+            "manteniendo el mismo orden y el mismo número de piezas."
+        )
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        clean = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
+        clean = re.sub(r"\s*```$", "", clean.strip())
+        try:
+            return json.loads(clean)
+        except Exception:
+            pass
+        match = re.search(r"\{[\s\S]*\}", clean)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception:
+                pass
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# ContentPieceStore
+# ---------------------------------------------------------------------------
+
+class ContentPieceStore:
+    @staticmethod
+    def _path(plan_id: str) -> Path:
+        CONTENT_DIR.mkdir(parents=True, exist_ok=True)
+        return CONTENT_DIR / f"{plan_id}.json"
+
+    @classmethod
+    def save(cls, record: ContentPiecesRecord) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO content_pieces (plan_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (plan_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (record.plan_id, Json(json.loads(record.model_dump_json()))),
+                )
+            return
+
+        cls._path(record.plan_id).write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, plan_id: str) -> Optional[ContentPiecesRecord]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM content_pieces WHERE plan_id = %s", (plan_id,))
+                row = cur.fetchone()
+            return ContentPiecesRecord(**row[0]) if row else None
+
+        path = cls._path(plan_id)
+        if not path.exists():
+            return None
+        return ContentPiecesRecord(**json.loads(path.read_text(encoding="utf-8")))
+
+
+async def execute_content_plan(plan_id: str) -> ContentPiecesRecord:
+    """Ejecuta el Módulo 3 (Calendario de Contenido) de un plan ya generado.
+
+    Idempotente: si ya existe contenido generado para este plan_id, devuelve el
+    resultado cacheado sin volver a llamar a Claude.
+    """
+    cached = ContentPieceStore.load(plan_id)
+    if cached:
+        return cached
+
+    plan_record = MarketingPlanStore.load(plan_id)
+    if not plan_record:
+        raise ValueError(f"No marketing plan found with id '{plan_id}'")
+
+    agent = ContentAgent()
+    pieces, _tokens = agent.run(plan_record.request, plan_record.plan.calendario_contenido)
+
+    record = ContentPiecesRecord(
+        plan_id=plan_id,
+        pieces=pieces,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    ContentPieceStore.save(record)
+    return record
 
 
 async def _build_audit_context(site_url: str) -> Tuple[str, Optional[float], Optional[float]]:

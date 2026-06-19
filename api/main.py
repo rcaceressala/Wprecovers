@@ -48,7 +48,7 @@ from audit_engine import run_full_audit, verify_url
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
 from db import init_db
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
-from marketing_engine import MarketingPlanStore, generate_marketing_plan
+from marketing_engine import MarketingPlanStore, execute_content_plan, generate_marketing_plan
 from project_engine import ProjectStore, resolve_api_key
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
 from report_engine import GuaranteeEvaluator, ReportStore, build_full_report
@@ -986,6 +986,27 @@ def get_marketing_plan(plan_id: str):
 @app.get("/marketing/", tags=["M10 Marketing OS"])
 def list_marketing_plans(project_id: Optional[str] = None):
     return {"plans": MarketingPlanStore.list_all(project_id)}
+
+
+@app.post("/marketing/{plan_id}/execute-content", tags=["M10 Marketing OS"])
+async def marketing_execute_content(plan_id: str):
+    """
+    Ejecuta el Módulo 3 (Calendario de Contenido) de un plan ya generado:
+    produce el texto completo, prompt de imagen, hashtags y mejor horario
+    para cada una de sus piezas, usando ContentAgent (Claude).
+
+    Idempotente: si ya se ejecutó antes para este plan_id, devuelve el
+    resultado guardado sin volver a llamar a Claude.
+    """
+    try:
+        record = await execute_content_plan(plan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Content execution failed: {e}")
+    return record
 
 
 @app.get("/marketing/download/{plan_id}", tags=["M10 Marketing OS"])

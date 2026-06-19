@@ -480,3 +480,19 @@ class MarketingPlanRecord(BaseModel):
     pagespeed_score: Optional[float] = None
     pdf_available: bool = False
     created_at: str
+
+
+class ContentPiece(BaseModel):
+    dia: int
+    formato: str
+    objetivo: str
+    texto_completo: str
+    prompt_imagen: str
+    hashtags: List[str]
+    mejor_horario: str
+
+
+class ContentPiecesRecord(BaseModel):
+    plan_id: str
+    pieces: List[ContentPiece]
+    created_at: str

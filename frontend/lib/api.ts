@@ -287,6 +287,22 @@ export interface MarketingPlanSummary {
   created_at: string
 }
 
+export interface ContentPiece {
+  dia: number
+  formato: string
+  objetivo: string
+  texto_completo: string
+  prompt_imagen: string
+  hashtags: string[]
+  mejor_horario: string
+}
+
+export interface ContentPiecesRecord {
+  plan_id: string
+  pieces: ContentPiece[]
+  created_at: string
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
@@ -460,6 +476,9 @@ export const api = {
     }
     return res.blob()
   },
+
+  executeMarketingContent: (planId: string) =>
+    apiFetch<ContentPiecesRecord>(`/marketing/${planId}/execute-content`, { method: 'POST' }),
 }
 
 // ---------------------------------------------------------------------------
