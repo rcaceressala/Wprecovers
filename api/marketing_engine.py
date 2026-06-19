@@ -21,7 +21,7 @@ from audit_engine import run_full_audit
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
 
 _MODEL = "claude-sonnet-4-6"
-_MAX_TOKENS = 8192
+_MAX_TOKENS = 32000
 
 # ---------------------------------------------------------------------------
 # MarketingAgent — generates the 9-module plan via the Anthropic API
@@ -117,12 +117,13 @@ class MarketingAgent:
         return plan, tokens
 
     def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, str]:
-        response = client.messages.create(
+        with client.messages.stream(
             model=self.MODEL,
             max_tokens=_MAX_TOKENS,
             system=_SYSTEM_PROMPT,
             messages=messages,
-        )
+        ) as stream:
+            response = stream.get_final_message()
         text = next((b.text for b in response.content if b.type == "text"), "")
         tokens = response.usage.input_tokens + response.usage.output_tokens
         return text, tokens, response.stop_reason
