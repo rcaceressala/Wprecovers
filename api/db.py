@@ -176,3 +176,12 @@ def init_db() -> None:
                     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+
+            # marketing_engine.py — MarketingActionTicketsStore (Módulo 9 ejecutado: tickets por plan)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS action_tickets (
+                    plan_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)

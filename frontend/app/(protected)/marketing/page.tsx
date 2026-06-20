@@ -9,7 +9,7 @@ import {
   api,
   type MarketingPlanRecord, type MarketingGenerateRequest,
   type MonthlyBudget, type WprecoverPlan, type ProjectSummary,
-  type ContentPiece,
+  type ContentPiece, type Ticket, type Prioridad,
 } from '@/lib/api'
 
 const BUDGET_LABELS: Record<MonthlyBudget, string> = {
@@ -17,6 +17,9 @@ const BUDGET_LABELS: Record<MonthlyBudget, string> = {
 }
 const PLAN_LABELS: Record<WprecoverPlan, string> = {
   starter: 'Starter', growth: 'Growth', scale: 'Scale', elite: 'Elite',
+}
+const PRIO_CLS: Record<Prioridad, string> = {
+  Critica: 'badge-critica', Alta: 'badge-alta', Media: 'badge-media', Baja: 'badge-baja',
 }
 
 // ---------------------------------------------------------------------------
@@ -106,12 +109,59 @@ function ContentPieceCard({ piece }: { piece: ContentPiece }) {
 }
 
 // ---------------------------------------------------------------------------
+// Action ticket row — created by execute-actions (Módulo 9)
+// ---------------------------------------------------------------------------
+function ActionTicketRow({ ticket }: { ticket: Ticket }) {
+  return (
+    <div className="bg-surface border border-border rounded-lg p-3 flex items-start gap-3">
+      <span className={`${PRIO_CLS[ticket.prioridad]} flex-shrink-0`}>{ticket.prioridad}</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-dim">{ticket.titulo}</p>
+        <p className="text-[10px] text-muted font-mono mt-1">
+          {ticket.id} · Ticket creado · {ticket.estimacion}m est.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Plan display — 9 modules
 // ---------------------------------------------------------------------------
 function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; planId: string }) {
   const [pieces, setPieces] = useState<ContentPiece[] | null>(null)
   const [executing, setExecuting] = useState(false)
   const [execError, setExecError] = useState<string | null>(null)
+
+  const [tickets, setTickets] = useState<Ticket[] | null>(null)
+  const [creatingTickets, setCreatingTickets] = useState(false)
+  const [ticketsError, setTicketsError] = useState<string | null>(null)
+
+  const handleCreateActionTickets = async () => {
+    setCreatingTickets(true)
+    setTicketsError(null)
+    try {
+      await api.executeMarketingActions(planId)
+      const poll = async () => {
+        const record = await api.getMarketingActions(planId)
+        if (record.status === 'DONE') {
+          setTickets(record.tickets)
+          setCreatingTickets(false)
+          return
+        }
+        if (record.status === 'FAILED') {
+          setTicketsError(record.error ?? 'Error al crear los tickets')
+          setCreatingTickets(false)
+          return
+        }
+        setTimeout(poll, 5000)
+      }
+      poll()
+    } catch (e: unknown) {
+      setTicketsError(e instanceof Error ? e.message : 'Error al crear los tickets')
+      setCreatingTickets(false)
+    }
+  }
 
   const handleExecuteContent = async () => {
     setExecuting(true)
@@ -223,7 +273,30 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
       </Section>
 
       <Section title="9. Top 10 Acciones Inmediatas" defaultOpen>
-        <BulletList items={plan.top_10_acciones} />
+        <div className="space-y-3">
+          {tickets
+            ? tickets.map((t) => <ActionTicketRow key={t.id} ticket={t} />)
+            : <BulletList items={plan.top_10_acciones} />}
+
+          {!tickets && (
+            <button
+              className="btn-primary flex items-center gap-2 w-full justify-center"
+              onClick={handleCreateActionTickets}
+              disabled={creatingTickets}
+            >
+              {creatingTickets
+                ? <><RefreshCw className="w-4 h-4 animate-spin" /> Creando tickets…</>
+                : <><Megaphone className="w-4 h-4" /> Crear tickets de estas acciones</>}
+            </button>
+          )}
+
+          {ticketsError && (
+            <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                            text-sm rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4" /> {ticketsError}
+            </div>
+          )}
+        </div>
       </Section>
     </div>
   )

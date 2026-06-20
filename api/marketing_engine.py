@@ -11,19 +11,24 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import db
 from models import (
+    Categoria,
     ContentCalendarItem,
     ContentJobStatus,
     ContentPiece,
     ContentPiecesRecord,
+    MarketingActionTicketsRecord,
     MarketingGenerateRequest,
     MarketingPlan,
     MarketingPlanRecord,
     Plan90Dias,
+    Prioridad,
+    Ticket,
 )
 from audit_engine import run_full_audit
 
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
 CONTENT_DIR = Path(__file__).parent / "content_pieces"
+ACTIONS_DIR = Path(__file__).parent / "action_tickets"
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 32000
@@ -384,6 +389,134 @@ async def _run_content_job(plan_id: str, plan_record: MarketingPlanRecord) -> No
             error=str(exc),
         )
     ContentPieceStore.save(record)
+
+
+# ---------------------------------------------------------------------------
+# MarketingActionTicketsStore — Módulo 9 ejecutado: Top 10 Acciones -> tickets
+# ---------------------------------------------------------------------------
+
+class MarketingActionTicketsStore:
+    @staticmethod
+    def _path(plan_id: str) -> Path:
+        ACTIONS_DIR.mkdir(parents=True, exist_ok=True)
+        return ACTIONS_DIR / f"{plan_id}.json"
+
+    @classmethod
+    def save(cls, record: MarketingActionTicketsRecord) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO action_tickets (plan_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (plan_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (record.plan_id, Json(json.loads(record.model_dump_json()))),
+                )
+            return
+
+        cls._path(record.plan_id).write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, plan_id: str) -> Optional[MarketingActionTicketsRecord]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM action_tickets WHERE plan_id = %s", (plan_id,))
+                row = cur.fetchone()
+            return MarketingActionTicketsRecord(**row[0]) if row else None
+
+        path = cls._path(plan_id)
+        if not path.exists():
+            return None
+        return MarketingActionTicketsRecord(**json.loads(path.read_text(encoding="utf-8")))
+
+
+# Top 10 Acciones ya viene ordenada por impacto ("acción 1 de mayor impacto en 7
+# días..."), así que la prioridad se deriva de la posición sin necesidad de una
+# llamada adicional a Claude.
+_ACTION_PRIORIDAD_BY_POSITION = (
+    [Prioridad.Alta] * 3 + [Prioridad.Media] * 4 + [Prioridad.Baja] * 3
+)
+_ACTION_ESTIMACION_BY_PRIORIDAD = {
+    Prioridad.Alta: 90,
+    Prioridad.Media: 60,
+    Prioridad.Baja: 30,
+}
+
+
+def _build_action_tickets(plan_id: str, plan_record: MarketingPlanRecord) -> List[Ticket]:
+    acciones = plan_record.plan.top_10_acciones
+    project_id = plan_record.request.project_id
+    tickets: List[Ticket] = []
+    for i, accion in enumerate(acciones):
+        prioridad = (
+            _ACTION_PRIORIDAD_BY_POSITION[i]
+            if i < len(_ACTION_PRIORIDAD_BY_POSITION)
+            else Prioridad.Baja
+        )
+        tickets.append(
+            Ticket(
+                id=f"TKT-MKT-{plan_id[-6:]}-{i + 1:02d}",
+                categoria=Categoria.Marketing,
+                titulo=accion,
+                prioridad=prioridad,
+                impacto=f"Acción #{i + 1} de 10 del plan de marketing (Módulo 9), prioridad {prioridad.value} según orden de impacto.",
+                agente="MarketingAgent",
+                estimacion=_ACTION_ESTIMACION_BY_PRIORIDAD[prioridad],
+                dependencias=[],
+                project_id=project_id,
+            )
+        )
+    return tickets
+
+
+async def start_actions_job(plan_id: str) -> MarketingActionTicketsRecord:
+    """Convierte el Módulo 9 (Top 10 Acciones Inmediatas) de un plan ya generado
+    en tickets reales (categoría Marketing), siguiendo el mismo patrón
+    job-en-background + polling que start_content_job.
+
+    Idempotente: si ya hay tickets generados (DONE) o un job en curso
+    (RUNNING) para este plan_id, los devuelve sin volver a crearlos.
+    """
+    cached = MarketingActionTicketsStore.load(plan_id)
+    if cached and cached.status in (ContentJobStatus.DONE, ContentJobStatus.RUNNING):
+        return cached
+
+    plan_record = MarketingPlanStore.load(plan_id)
+    if not plan_record:
+        raise ValueError(f"No marketing plan found with id '{plan_id}'")
+
+    placeholder = MarketingActionTicketsRecord(
+        plan_id=plan_id,
+        tickets=[],
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status=ContentJobStatus.RUNNING,
+    )
+    MarketingActionTicketsStore.save(placeholder)
+    asyncio.create_task(_run_actions_job(plan_id, plan_record))
+    return placeholder
+
+
+async def _run_actions_job(plan_id: str, plan_record: MarketingPlanRecord) -> None:
+    try:
+        tickets = await asyncio.to_thread(_build_action_tickets, plan_id, plan_record)
+        record = MarketingActionTicketsRecord(
+            plan_id=plan_id,
+            tickets=tickets,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.DONE,
+        )
+    except Exception as exc:
+        record = MarketingActionTicketsRecord(
+            plan_id=plan_id,
+            tickets=[],
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.FAILED,
+            error=str(exc),
+        )
+    MarketingActionTicketsStore.save(record)
 
 
 async def _build_audit_context(site_url: str) -> Tuple[str, Optional[float], Optional[float]]:

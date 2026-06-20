@@ -4,7 +4,7 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'https://wprecovers.onrender.com
 // Types
 // ---------------------------------------------------------------------------
 
-export type Categoria = 'SEO' | 'Performance' | 'Conversion' | 'Seguridad' | 'WooCommerce'
+export type Categoria = 'SEO' | 'Performance' | 'Conversion' | 'Seguridad' | 'WooCommerce' | 'Marketing'
 export type Prioridad = 'Critica' | 'Alta' | 'Media' | 'Baja'
 export type EstadoTicket = 'OPEN' | 'IN_PROGRESS' | 'DONE' | 'FAIL'
 export type FixStatus = 'PENDING' | 'APPLIED' | 'ROLLED_BACK' | 'FAILED'
@@ -19,6 +19,7 @@ export interface Ticket {
   estimacion: number
   dependencias: string[]
   estado: EstadoTicket
+  project_id?: string | null
 }
 
 export interface TicketSummary {
@@ -307,6 +308,14 @@ export interface ContentPiecesRecord {
   error?: string | null
 }
 
+export interface MarketingActionTicketsRecord {
+  plan_id: string
+  tickets: Ticket[]
+  created_at: string
+  status: ContentJobStatus
+  error?: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
@@ -485,6 +494,10 @@ export const api = {
     apiFetch<ContentPiecesRecord>(`/marketing/${planId}/execute-content`, { method: 'POST' }),
   getMarketingContent: (planId: string) =>
     apiFetch<ContentPiecesRecord>(`/marketing/${planId}/content`),
+  executeMarketingActions: (planId: string) =>
+    apiFetch<MarketingActionTicketsRecord>(`/marketing/${planId}/execute-actions`, { method: 'POST' }),
+  getMarketingActions: (planId: string) =>
+    apiFetch<MarketingActionTicketsRecord>(`/marketing/${planId}/actions`),
 }
 
 // ---------------------------------------------------------------------------

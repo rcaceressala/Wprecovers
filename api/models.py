@@ -12,6 +12,7 @@ class Categoria(str, Enum):
     Conversion = "Conversion"
     Seguridad = "Seguridad"
     WooCommerce = "WooCommerce"
+    Marketing = "Marketing"
 
 
 class Prioridad(str, Enum):
@@ -38,6 +39,7 @@ class Ticket(BaseModel):
     estimacion: int = Field(..., description="Estimated fix time in minutes")
     dependencias: List[str] = []
     estado: EstadoTicket = EstadoTicket.OPEN
+    project_id: Optional[str] = None
 
 
 class AuditInput(BaseModel):
@@ -502,6 +504,14 @@ class ContentJobStatus(str, Enum):
 class ContentPiecesRecord(BaseModel):
     plan_id: str
     pieces: List[ContentPiece] = []
+    created_at: str
+    status: ContentJobStatus = ContentJobStatus.DONE
+    error: Optional[str] = None
+
+
+class MarketingActionTicketsRecord(BaseModel):
+    plan_id: str
+    tickets: List[Ticket] = []
     created_at: str
     status: ContentJobStatus = ContentJobStatus.DONE
     error: Optional[str] = None
