@@ -13,9 +13,6 @@ from models import ProjectCreateRequest, ProjectRecord, ProjectStatus
 
 PROJECTS_DIR = Path(__file__).parent / "projects"
 
-# In-process cache: project_id -> ProjectRecord
-_projects: Dict[str, ProjectRecord] = {}
-
 # Column order shared by every SQL statement below.
 _COLUMNS = [
     "id", "client_name", "site_url", "plan", "notas", "status",
@@ -63,8 +60,6 @@ class ProjectStore:
 
     @classmethod
     def save(cls, record: ProjectRecord) -> None:
-        _projects[record.id] = record
-
         if db.is_configured():
             from psycopg.types.json import Json
 
@@ -88,9 +83,7 @@ class ProjectStore:
 
     @classmethod
     def get(cls, project_id: str) -> Optional[ProjectRecord]:
-        if project_id in _projects:
-            record = _projects[project_id]
-        elif db.is_configured():
+        if db.is_configured():
             with db.get_connection() as conn, conn.cursor() as cur:
                 cur.execute(
                     f"SELECT {', '.join(_COLUMNS)} FROM projects WHERE id = %s",
@@ -100,13 +93,11 @@ class ProjectStore:
             if not row:
                 return None
             record = _row_to_record(row)
-            _projects[project_id] = record
         else:
             path = cls._path(project_id)
             if not path.exists():
                 return None
             record = ProjectRecord(**json.loads(path.read_text(encoding="utf-8")))
-            _projects[project_id] = record
 
         # Backfill: projects created before per-project keys existed.
         if not record.wprepro_api_key:
@@ -117,8 +108,6 @@ class ProjectStore:
 
     @classmethod
     def delete(cls, project_id: str) -> bool:
-        _projects.pop(project_id, None)
-
         if db.is_configured():
             with db.get_connection() as conn, conn.cursor() as cur:
                 cur.execute("DELETE FROM projects WHERE id = %s", (project_id,))
@@ -136,10 +125,7 @@ class ProjectStore:
             with db.get_connection() as conn, conn.cursor() as cur:
                 cur.execute(f"SELECT {', '.join(_COLUMNS)} FROM projects ORDER BY created_at DESC")
                 rows = cur.fetchall()
-            records = [_row_to_record(r) for r in rows]
-            for r in records:
-                _projects[r.id] = r
-            return records
+            return [_row_to_record(r) for r in rows]
 
         if not PROJECTS_DIR.exists():
             return []
@@ -150,7 +136,6 @@ class ProjectStore:
                 records_by_id[data["id"]] = ProjectRecord(**data)
             except Exception:
                 pass
-        records_by_id.update(_projects)
         return sorted(records_by_id.values(), key=lambda p: p.created_at, reverse=True)
 
 
