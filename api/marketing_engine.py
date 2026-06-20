@@ -23,12 +23,15 @@ from models import (
     Plan90Dias,
     Prioridad,
     Ticket,
+    WhatsAppMessage,
+    WhatsAppMessagesRecord,
 )
 from audit_engine import run_full_audit
 
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
 CONTENT_DIR = Path(__file__).parent / "content_pieces"
 ACTIONS_DIR = Path(__file__).parent / "action_tickets"
+MESSAGES_DIR = Path(__file__).parent / "whatsapp_messages"
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 32000
@@ -293,6 +296,115 @@ class ContentAgent:
         return {}
 
 
+_WHATSAPP_JSON_SCHEMA = """\
+Responde ÚNICAMENTE con este JSON (sin texto adicional, sin bloques markdown):
+{
+  "mensajes": [
+    {
+      "categoria": "Bienvenida",
+      "mensaje_texto": "texto final del mensaje de WhatsApp, listo para copiar y enviar, en español neutro LATAM...",
+      "variables_sugeridas": ["{nombre_cliente}", "{nombre_negocio}"],
+      "mejor_momento_envio": "Disparador o momento concreto, ej. 'Inmediatamente tras la primera consulta'"
+    },
+    "... una entrada por cada categoría de estrategia_whatsapp recibida, mismo orden, mismo número de mensajes ..."
+  ]
+}"""
+
+_WHATSAPP_SYSTEM_PROMPT = f"""Eres WhatsAppAgent, especialista en mensajería conversacional para PYMEs LATAM
+dentro de WPRecover 2.0. Tu trabajo es tomar la Estrategia de WhatsApp (Módulo 5) de un plan de marketing
+ya aprobado y producir el texto REAL de cada mensaje, listo para copiar y enviar — no se envía nada
+automáticamente, el negocio copia el texto generado a su WhatsApp.
+
+PRINCIPIOS:
+- No describas la estrategia, escribe el mensaje completo: mensaje_texto debe ser el texto final, no un
+  resumen de la táctica.
+- Usa marcadores de variable entre llaves para los datos que cambian por cliente (nombre, producto, fecha) —
+  nunca inventes un nombre o número real; lista esos mismos marcadores en variables_sugeridas.
+- mejor_momento_envio debe ser un disparador o momento concreto, no una franja vaga.
+- Respeta el orden y el número de categorías de estrategia_whatsapp ya definidas en el plan original.
+- Todo el contenido debe estar en español neutro LATAM.
+
+{_WHATSAPP_JSON_SCHEMA}"""
+
+
+class WhatsAppAgent:
+    NOMBRE = "WhatsAppAgent"
+    MODEL = _MODEL
+
+    def run(
+        self, req: MarketingGenerateRequest, estrategia_whatsapp: List[str]
+    ) -> Tuple[List[WhatsAppMessage], int]:
+        try:
+            import anthropic as _anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic package not installed. Run: pip install 'anthropic>=0.40.0'"
+            ) from exc
+
+        client = _anthropic_client(_anthropic)
+        user_msg = self._build_user_message(req, estrategia_whatsapp)
+        messages = [{"role": "user", "content": user_msg}]
+
+        text, tokens, stop_reason = self._invoke(client, messages)
+        parsed = self._parse_json(text)
+        mensajes = parsed.get("mensajes") if parsed else None
+
+        if not mensajes or len(mensajes) != len(estrategia_whatsapp):
+            hint = (
+                "la respuesta se truncó por max_tokens — sube _MAX_TOKENS"
+                if stop_reason == "max_tokens"
+                else "la respuesta no es JSON válido o no tiene un mensaje por cada categoría de la estrategia"
+            )
+            raise RuntimeError(
+                f"WhatsAppAgent: no se pudo generar los mensajes completos ({hint}). "
+                f"stop_reason={stop_reason}, respuesta cruda (primeros 500 chars): {text[:500]!r}"
+            )
+
+        return [WhatsAppMessage(**item) for item in mensajes], tokens
+
+    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, str]:
+        with client.messages.stream(
+            model=self.MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=_WHATSAPP_SYSTEM_PROMPT,
+            messages=messages,
+        ) as stream:
+            response = stream.get_final_message()
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        return text, tokens, response.stop_reason
+
+    @staticmethod
+    def _build_user_message(req: MarketingGenerateRequest, estrategia_whatsapp: List[str]) -> str:
+        estrategia_text = "\n".join(f"- {item}" for item in estrategia_whatsapp)
+        return (
+            f"DATOS DEL CLIENTE:\n"
+            f"Sitio: {req.site_url}\n"
+            f"Rubro: {req.business_type}\n"
+            f"Ciudad: {req.city}\n\n"
+            f"ESTRATEGIA DE WHATSAPP A EJECUTAR ({len(estrategia_whatsapp)} categorías):\n"
+            f"{estrategia_text}\n\n"
+            "Genera el mensaje real de cada categoría siguiendo exactamente el esquema indicado, "
+            "manteniendo el mismo orden y el mismo número de mensajes."
+        )
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        clean = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
+        clean = re.sub(r"\s*```$", "", clean.strip())
+        try:
+            return json.loads(clean)
+        except Exception:
+            pass
+        match = re.search(r"\{[\s\S]*\}", clean)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception:
+                pass
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # ContentPieceStore
 # ---------------------------------------------------------------------------
@@ -517,6 +629,101 @@ async def _run_actions_job(plan_id: str, plan_record: MarketingPlanRecord) -> No
             error=str(exc),
         )
     MarketingActionTicketsStore.save(record)
+
+
+# ---------------------------------------------------------------------------
+# WhatsAppMessageStore — Módulo 5 ejecutado: mensajes reales por plan
+# ---------------------------------------------------------------------------
+
+class WhatsAppMessageStore:
+    @staticmethod
+    def _path(plan_id: str) -> Path:
+        MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
+        return MESSAGES_DIR / f"{plan_id}.json"
+
+    @classmethod
+    def save(cls, record: WhatsAppMessagesRecord) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO whatsapp_messages (plan_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (plan_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (record.plan_id, Json(json.loads(record.model_dump_json()))),
+                )
+            return
+
+        cls._path(record.plan_id).write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, plan_id: str) -> Optional[WhatsAppMessagesRecord]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM whatsapp_messages WHERE plan_id = %s", (plan_id,))
+                row = cur.fetchone()
+            return WhatsAppMessagesRecord(**row[0]) if row else None
+
+        path = cls._path(plan_id)
+        if not path.exists():
+            return None
+        return WhatsAppMessagesRecord(**json.loads(path.read_text(encoding="utf-8")))
+
+
+async def start_whatsapp_job(plan_id: str) -> WhatsAppMessagesRecord:
+    """Ejecuta el Módulo 5 (Estrategia WhatsApp) de un plan ya generado.
+
+    Mismo patrón job-en-background + polling que start_content_job: devuelve
+    de inmediato (cacheado si DONE/RUNNING, o un placeholder RUNNING) y lanza
+    la llamada a Claude en background. El llamador debe seguir consultando
+    WhatsAppMessageStore.load(plan_id) (ver GET /marketing/{plan_id}/whatsapp)
+    hasta que el status sea DONE/FAILED.
+
+    Solo genera el texto de cada mensaje — no envía nada vía WhatsApp.
+    """
+    cached = WhatsAppMessageStore.load(plan_id)
+    if cached and cached.status in (ContentJobStatus.DONE, ContentJobStatus.RUNNING):
+        return cached
+
+    plan_record = MarketingPlanStore.load(plan_id)
+    if not plan_record:
+        raise ValueError(f"No marketing plan found with id '{plan_id}'")
+
+    placeholder = WhatsAppMessagesRecord(
+        plan_id=plan_id,
+        mensajes=[],
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status=ContentJobStatus.RUNNING,
+    )
+    WhatsAppMessageStore.save(placeholder)
+    asyncio.create_task(_run_whatsapp_job(plan_id, plan_record))
+    return placeholder
+
+
+async def _run_whatsapp_job(plan_id: str, plan_record: MarketingPlanRecord) -> None:
+    agent = WhatsAppAgent()
+    try:
+        mensajes, _tokens = await asyncio.to_thread(
+            agent.run, plan_record.request, plan_record.plan.estrategia_whatsapp
+        )
+        record = WhatsAppMessagesRecord(
+            plan_id=plan_id,
+            mensajes=mensajes,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.DONE,
+        )
+    except Exception as exc:
+        record = WhatsAppMessagesRecord(
+            plan_id=plan_id,
+            mensajes=[],
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.FAILED,
+            error=str(exc),
+        )
+    WhatsAppMessageStore.save(record)
 
 
 async def _build_audit_context(site_url: str) -> Tuple[str, Optional[float], Optional[float]]:

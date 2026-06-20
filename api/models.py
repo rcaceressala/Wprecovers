@@ -515,3 +515,18 @@ class MarketingActionTicketsRecord(BaseModel):
     created_at: str
     status: ContentJobStatus = ContentJobStatus.DONE
     error: Optional[str] = None
+
+
+class WhatsAppMessage(BaseModel):
+    categoria: str
+    mensaje_texto: str
+    variables_sugeridas: List[str] = []
+    mejor_momento_envio: str
+
+
+class WhatsAppMessagesRecord(BaseModel):
+    plan_id: str
+    mensajes: List[WhatsAppMessage] = []
+    created_at: str
+    status: ContentJobStatus = ContentJobStatus.DONE
+    error: Optional[str] = None

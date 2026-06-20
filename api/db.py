@@ -185,3 +185,12 @@ def init_db() -> None:
                     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+
+            # marketing_engine.py — WhatsAppMessageStore (Módulo 5 ejecutado: mensajes reales por plan)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS whatsapp_messages (
+                    plan_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)

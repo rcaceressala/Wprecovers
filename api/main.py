@@ -52,9 +52,11 @@ from marketing_engine import (
     ContentPieceStore,
     MarketingActionTicketsStore,
     MarketingPlanStore,
+    WhatsAppMessageStore,
     generate_marketing_plan,
     start_actions_job,
     start_content_job,
+    start_whatsapp_job,
 )
 from project_engine import ProjectStore, resolve_api_key
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
@@ -1046,6 +1048,35 @@ def get_marketing_actions(plan_id: str):
     record = MarketingActionTicketsStore.load(plan_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No actions job found for plan '{plan_id}'")
+    return record
+
+
+@app.post("/marketing/{plan_id}/execute-whatsapp", status_code=202, tags=["M10 Marketing OS"])
+async def marketing_execute_whatsapp(plan_id: str):
+    """
+    Lanza el Módulo 5 (Estrategia WhatsApp) de un plan ya generado:
+    produce el texto real de cada mensaje (bienvenida, seguimiento,
+    reactivación, solicitud de reseña) usando WhatsAppAgent. Solo genera
+    texto — no envía nada vía WhatsApp.
+
+    Responde de inmediato (status RUNNING) y corre la llamada a Claude en
+    background — consultar el resultado con GET /marketing/{plan_id}/whatsapp.
+    Idempotente: si ya se ejecutó antes para este plan_id, devuelve el
+    resultado guardado sin volver a llamar a Claude.
+    """
+    try:
+        record = await start_whatsapp_job(plan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return record
+
+
+@app.get("/marketing/{plan_id}/whatsapp", tags=["M10 Marketing OS"])
+def get_marketing_whatsapp(plan_id: str):
+    """Consulta el estado/resultado del job de mensajes lanzado por execute-whatsapp."""
+    record = WhatsAppMessageStore.load(plan_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No whatsapp job found for plan '{plan_id}'")
     return record
 
 

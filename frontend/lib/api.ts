@@ -316,6 +316,21 @@ export interface MarketingActionTicketsRecord {
   error?: string | null
 }
 
+export interface WhatsAppMessage {
+  categoria: string
+  mensaje_texto: string
+  variables_sugeridas: string[]
+  mejor_momento_envio: string
+}
+
+export interface WhatsAppMessagesRecord {
+  plan_id: string
+  mensajes: WhatsAppMessage[]
+  created_at: string
+  status: ContentJobStatus
+  error?: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
@@ -498,6 +513,10 @@ export const api = {
     apiFetch<MarketingActionTicketsRecord>(`/marketing/${planId}/execute-actions`, { method: 'POST' }),
   getMarketingActions: (planId: string) =>
     apiFetch<MarketingActionTicketsRecord>(`/marketing/${planId}/actions`),
+  executeMarketingWhatsapp: (planId: string) =>
+    apiFetch<WhatsAppMessagesRecord>(`/marketing/${planId}/execute-whatsapp`, { method: 'POST' }),
+  getMarketingWhatsapp: (planId: string) =>
+    apiFetch<WhatsAppMessagesRecord>(`/marketing/${planId}/whatsapp`),
 }
 
 // ---------------------------------------------------------------------------
