@@ -492,7 +492,16 @@ class ContentPiece(BaseModel):
     mejor_horario: str
 
 
+class ContentJobStatus(str, Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    DONE = "DONE"
+    FAILED = "FAILED"
+
+
 class ContentPiecesRecord(BaseModel):
     plan_id: str
-    pieces: List[ContentPiece]
+    pieces: List[ContentPiece] = []
     created_at: str
+    status: ContentJobStatus = ContentJobStatus.DONE
+    error: Optional[str] = None

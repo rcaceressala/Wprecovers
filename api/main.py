@@ -48,7 +48,7 @@ from audit_engine import run_full_audit, verify_url
 from billing_engine import PLANS, BillingService, SubscriptionStore, UsageTracker
 from db import init_db
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
-from marketing_engine import MarketingPlanStore, execute_content_plan, generate_marketing_plan
+from marketing_engine import ContentPieceStore, MarketingPlanStore, generate_marketing_plan, start_content_job
 from project_engine import ProjectStore, resolve_api_key
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
 from report_engine import GuaranteeEvaluator, ReportStore, build_full_report
@@ -988,24 +988,31 @@ def list_marketing_plans(project_id: Optional[str] = None):
     return {"plans": MarketingPlanStore.list_all(project_id)}
 
 
-@app.post("/marketing/{plan_id}/execute-content", tags=["M10 Marketing OS"])
+@app.post("/marketing/{plan_id}/execute-content", status_code=202, tags=["M10 Marketing OS"])
 async def marketing_execute_content(plan_id: str):
     """
-    Ejecuta el Módulo 3 (Calendario de Contenido) de un plan ya generado:
+    Lanza el Módulo 3 (Calendario de Contenido) de un plan ya generado:
     produce el texto completo, prompt de imagen, hashtags y mejor horario
     para cada una de sus piezas, usando ContentAgent (Claude).
 
+    Responde de inmediato (status RUNNING) y corre la llamada a Claude en
+    background — consultar el resultado con GET /marketing/{plan_id}/content.
     Idempotente: si ya se ejecutó antes para este plan_id, devuelve el
     resultado guardado sin volver a llamar a Claude.
     """
     try:
-        record = await execute_content_plan(plan_id)
+        record = await start_content_job(plan_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Content execution failed: {e}")
+    return record
+
+
+@app.get("/marketing/{plan_id}/content", tags=["M10 Marketing OS"])
+def get_marketing_content(plan_id: str):
+    """Consulta el estado/resultado del job de contenido lanzado por execute-content."""
+    record = ContentPieceStore.load(plan_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No content job found for plan '{plan_id}'")
     return record
 
 

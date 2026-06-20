@@ -297,10 +297,14 @@ export interface ContentPiece {
   mejor_horario: string
 }
 
+export type ContentJobStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED'
+
 export interface ContentPiecesRecord {
   plan_id: string
   pieces: ContentPiece[]
   created_at: string
+  status: ContentJobStatus
+  error?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +483,8 @@ export const api = {
 
   executeMarketingContent: (planId: string) =>
     apiFetch<ContentPiecesRecord>(`/marketing/${planId}/execute-content`, { method: 'POST' }),
+  getMarketingContent: (planId: string) =>
+    apiFetch<ContentPiecesRecord>(`/marketing/${planId}/content`),
 }
 
 // ---------------------------------------------------------------------------

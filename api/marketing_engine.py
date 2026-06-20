@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -11,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import db
 from models import (
     ContentCalendarItem,
+    ContentJobStatus,
     ContentPiece,
     ContentPiecesRecord,
     MarketingGenerateRequest,
@@ -328,30 +330,60 @@ class ContentPieceStore:
         return ContentPiecesRecord(**json.loads(path.read_text(encoding="utf-8")))
 
 
-async def execute_content_plan(plan_id: str) -> ContentPiecesRecord:
+async def start_content_job(plan_id: str) -> ContentPiecesRecord:
     """Ejecuta el Módulo 3 (Calendario de Contenido) de un plan ya generado.
 
-    Idempotente: si ya existe contenido generado para este plan_id, devuelve el
-    resultado cacheado sin volver a llamar a Claude.
+    Devuelve de inmediato: si ya hay contenido cacheado (DONE) o un job en
+    curso (RUNNING) lo retorna tal cual; si no, deja un placeholder RUNNING
+    guardado y lanza la llamada a Claude en background. El llamador debe
+    seguir consultando el resultado vía ContentPieceStore.load(plan_id)
+    (ver GET /marketing/{plan_id}/content) hasta que el status sea DONE/FAILED.
+
+    Esto evita bloquear la respuesta HTTP durante los minutos que tarda
+    Claude en generar las piezas, lo que en Render terminaba en un 502
+    (el proxy corta la conexión mucho antes de que el cliente Anthropic
+    llegue a su propio timeout).
     """
     cached = ContentPieceStore.load(plan_id)
-    if cached:
+    if cached and cached.status in (ContentJobStatus.DONE, ContentJobStatus.RUNNING):
         return cached
 
     plan_record = MarketingPlanStore.load(plan_id)
     if not plan_record:
         raise ValueError(f"No marketing plan found with id '{plan_id}'")
 
-    agent = ContentAgent()
-    pieces, _tokens = agent.run(plan_record.request, plan_record.plan.calendario_contenido)
-
-    record = ContentPiecesRecord(
+    placeholder = ContentPiecesRecord(
         plan_id=plan_id,
-        pieces=pieces,
+        pieces=[],
         created_at=datetime.now(timezone.utc).isoformat(),
+        status=ContentJobStatus.RUNNING,
     )
+    ContentPieceStore.save(placeholder)
+    asyncio.create_task(_run_content_job(plan_id, plan_record))
+    return placeholder
+
+
+async def _run_content_job(plan_id: str, plan_record: MarketingPlanRecord) -> None:
+    agent = ContentAgent()
+    try:
+        pieces, _tokens = await asyncio.to_thread(
+            agent.run, plan_record.request, plan_record.plan.calendario_contenido
+        )
+        record = ContentPiecesRecord(
+            plan_id=plan_id,
+            pieces=pieces,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.DONE,
+        )
+    except Exception as exc:
+        record = ContentPiecesRecord(
+            plan_id=plan_id,
+            pieces=[],
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.FAILED,
+            error=str(exc),
+        )
     ContentPieceStore.save(record)
-    return record
 
 
 async def _build_audit_context(site_url: str) -> Tuple[str, Optional[float], Optional[float]]:
@@ -581,7 +613,7 @@ async def generate_marketing_plan(req: MarketingGenerateRequest) -> MarketingPla
     audit_context, recovery_score, pagespeed_score = await _build_audit_context(req.site_url)
 
     agent = MarketingAgent()
-    plan, _tokens = agent.run(req, audit_context)
+    plan, _tokens = await asyncio.to_thread(agent.run, req, audit_context)
 
     plan_id = f"mkt_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     record = MarketingPlanRecord(

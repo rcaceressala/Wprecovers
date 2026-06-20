@@ -117,11 +117,24 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
     setExecuting(true)
     setExecError(null)
     try {
-      const record = await api.executeMarketingContent(planId)
-      setPieces(record.pieces)
+      await api.executeMarketingContent(planId)
+      const poll = async () => {
+        const record = await api.getMarketingContent(planId)
+        if (record.status === 'DONE') {
+          setPieces(record.pieces)
+          setExecuting(false)
+          return
+        }
+        if (record.status === 'FAILED') {
+          setExecError(record.error ?? 'Error al generar el contenido')
+          setExecuting(false)
+          return
+        }
+        setTimeout(poll, 5000)
+      }
+      poll()
     } catch (e: unknown) {
       setExecError(e instanceof Error ? e.message : 'Error al generar el contenido')
-    } finally {
       setExecuting(false)
     }
   }
