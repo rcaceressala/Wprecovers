@@ -194,3 +194,12 @@ def init_db() -> None:
                     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+
+            # marketing_engine.py — Plan90DiasTicketsStore (Módulo 6 ejecutado: tickets por plan)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS plan90_tickets (
+                    plan_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)

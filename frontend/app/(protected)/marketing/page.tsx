@@ -185,6 +185,36 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
   const [executingWhatsapp, setExecutingWhatsapp] = useState(false)
   const [whatsappError, setWhatsappError] = useState<string | null>(null)
 
+  const [plan90Tickets, setPlan90Tickets] = useState<Ticket[] | null>(null)
+  const [creatingPlan90, setCreatingPlan90] = useState(false)
+  const [plan90Error, setPlan90Error] = useState<string | null>(null)
+
+  const handleCreatePlan90Tickets = async () => {
+    setCreatingPlan90(true)
+    setPlan90Error(null)
+    try {
+      await api.executeMarketingPlan90(planId)
+      const poll = async () => {
+        const record = await api.getMarketingPlan90(planId)
+        if (record.status === 'DONE') {
+          setPlan90Tickets(record.tickets)
+          setCreatingPlan90(false)
+          return
+        }
+        if (record.status === 'FAILED') {
+          setPlan90Error(record.error ?? 'Error al crear los tickets')
+          setCreatingPlan90(false)
+          return
+        }
+        setTimeout(poll, 5000)
+      }
+      poll()
+    } catch (e: unknown) {
+      setPlan90Error(e instanceof Error ? e.message : 'Error al crear los tickets')
+      setCreatingPlan90(false)
+    }
+  }
+
   const handleExecuteWhatsapp = async () => {
     setExecutingWhatsapp(true)
     setWhatsappError(null)
@@ -351,17 +381,38 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
 
       <Section title="6. Plan de Ejecución (90 días)">
         <div className="space-y-4">
-          {([
-            ['Semana 1-2', plan.plan_ejecucion_90_dias.semana_1_2],
-            ['Semana 3-4', plan.plan_ejecucion_90_dias.semana_3_4],
-            ['Mes 2', plan.plan_ejecucion_90_dias.mes_2],
-            ['Mes 3', plan.plan_ejecucion_90_dias.mes_3],
-          ] as [string, string[]][]).map(([label, items]) => (
-            <div key={label}>
-              <p className="text-[10px] text-muted font-mono uppercase tracking-wide mb-2">{label}</p>
-              <BulletList items={items} />
+          {plan90Tickets
+            ? plan90Tickets.map((t) => <ActionTicketRow key={t.id} ticket={t} />)
+            : ([
+                ['Semana 1-2', plan.plan_ejecucion_90_dias.semana_1_2],
+                ['Semana 3-4', plan.plan_ejecucion_90_dias.semana_3_4],
+                ['Mes 2', plan.plan_ejecucion_90_dias.mes_2],
+                ['Mes 3', plan.plan_ejecucion_90_dias.mes_3],
+              ] as [string, string[]][]).map(([label, items]) => (
+                <div key={label}>
+                  <p className="text-[10px] text-muted font-mono uppercase tracking-wide mb-2">{label}</p>
+                  <BulletList items={items} />
+                </div>
+              ))}
+
+          {!plan90Tickets && (
+            <button
+              className="btn-primary flex items-center gap-2 w-full justify-center"
+              onClick={handleCreatePlan90Tickets}
+              disabled={creatingPlan90}
+            >
+              {creatingPlan90
+                ? <><RefreshCw className="w-4 h-4 animate-spin" /> Creando tickets…</>
+                : <><Megaphone className="w-4 h-4" /> Crear tickets de este plan</>}
+            </button>
+          )}
+
+          {plan90Error && (
+            <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                            text-sm rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4" /> {plan90Error}
             </div>
-          ))}
+          )}
         </div>
       </Section>
 

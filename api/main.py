@@ -52,10 +52,12 @@ from marketing_engine import (
     ContentPieceStore,
     MarketingActionTicketsStore,
     MarketingPlanStore,
+    Plan90DiasTicketsStore,
     WhatsAppMessageStore,
     generate_marketing_plan,
     start_actions_job,
     start_content_job,
+    start_plan90_job,
     start_whatsapp_job,
 )
 from project_engine import ProjectStore, resolve_api_key
@@ -1048,6 +1050,34 @@ def get_marketing_actions(plan_id: str):
     record = MarketingActionTicketsStore.load(plan_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No actions job found for plan '{plan_id}'")
+    return record
+
+
+@app.post("/marketing/{plan_id}/execute-plan90", status_code=202, tags=["M10 Marketing OS"])
+async def marketing_execute_plan90(plan_id: str):
+    """
+    Lanza el Módulo 6 (Plan de Ejecución 90 días) de un plan ya generado:
+    convierte cada acción de las 4 fases (semana 1-2, semana 3-4, mes 2, mes 3)
+    en un ticket real (categoría Marketing), con prioridad y estimación
+    derivadas de la fase.
+
+    Responde de inmediato (status RUNNING) — consultar el resultado con
+    GET /marketing/{plan_id}/plan90. Idempotente: si ya se ejecutó antes
+    para este plan_id, devuelve los tickets ya creados sin duplicarlos.
+    """
+    try:
+        record = await start_plan90_job(plan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return record
+
+
+@app.get("/marketing/{plan_id}/plan90", tags=["M10 Marketing OS"])
+def get_marketing_plan90(plan_id: str):
+    """Consulta el estado/resultado del job de tickets lanzado por execute-plan90."""
+    record = Plan90DiasTicketsStore.load(plan_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No plan90 job found for plan '{plan_id}'")
     return record
 
 

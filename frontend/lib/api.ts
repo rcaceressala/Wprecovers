@@ -316,6 +316,14 @@ export interface MarketingActionTicketsRecord {
   error?: string | null
 }
 
+export interface Plan90DiasTicketsRecord {
+  plan_id: string
+  tickets: Ticket[]
+  created_at: string
+  status: ContentJobStatus
+  error?: string | null
+}
+
 export interface WhatsAppMessage {
   categoria: string
   mensaje_texto: string
@@ -517,6 +525,10 @@ export const api = {
     apiFetch<WhatsAppMessagesRecord>(`/marketing/${planId}/execute-whatsapp`, { method: 'POST' }),
   getMarketingWhatsapp: (planId: string) =>
     apiFetch<WhatsAppMessagesRecord>(`/marketing/${planId}/whatsapp`),
+  executeMarketingPlan90: (planId: string) =>
+    apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/execute-plan90`, { method: 'POST' }),
+  getMarketingPlan90: (planId: string) =>
+    apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/plan90`),
 }
 
 // ---------------------------------------------------------------------------

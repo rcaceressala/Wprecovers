@@ -517,6 +517,14 @@ class MarketingActionTicketsRecord(BaseModel):
     error: Optional[str] = None
 
 
+class Plan90DiasTicketsRecord(BaseModel):
+    plan_id: str
+    tickets: List[Ticket] = []
+    created_at: str
+    status: ContentJobStatus = ContentJobStatus.DONE
+    error: Optional[str] = None
+
+
 class WhatsAppMessage(BaseModel):
     categoria: str
     mensaje_texto: str
