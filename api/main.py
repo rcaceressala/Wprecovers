@@ -50,6 +50,7 @@ from db import init_db
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
 from marketing_engine import (
     ContentPieceStore,
+    IaAutomatizacionStore,
     MarketingActionTicketsStore,
     MarketingPlanStore,
     Plan90DiasTicketsStore,
@@ -57,6 +58,7 @@ from marketing_engine import (
     generate_marketing_plan,
     start_actions_job,
     start_content_job,
+    start_iaautomatizacion_job,
     start_plan90_job,
     start_whatsapp_job,
 )
@@ -1107,6 +1109,35 @@ def get_marketing_whatsapp(plan_id: str):
     record = WhatsAppMessageStore.load(plan_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No whatsapp job found for plan '{plan_id}'")
+    return record
+
+
+@app.post("/marketing/{plan_id}/execute-iaautomatizacion", status_code=202, tags=["M10 Marketing OS"])
+async def marketing_execute_iaautomatizacion(plan_id: str):
+    """
+    Lanza el Módulo 7 (IA y Automatización) de un plan ya generado: convierte
+    cada recomendación en prosa de ia_automatizacion en una ficha ejecutable
+    estructurada (herramienta, caso de uso, pasos, costo, prioridad inferida,
+    estimación) usando IaAutomatizacionAgent.
+
+    Responde de inmediato (status RUNNING) y corre la llamada a Claude en
+    background — consultar el resultado con GET /marketing/{plan_id}/iaautomatizacion.
+    Idempotente: si ya se ejecutó antes para este plan_id, devuelve el resultado
+    guardado sin volver a llamar a Claude.
+    """
+    try:
+        record = await start_iaautomatizacion_job(plan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return record
+
+
+@app.get("/marketing/{plan_id}/iaautomatizacion", tags=["M10 Marketing OS"])
+def get_marketing_iaautomatizacion(plan_id: str):
+    """Consulta el estado/resultado del job de fichas lanzado por execute-iaautomatizacion."""
+    record = IaAutomatizacionStore.load(plan_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No iaautomatizacion job found for plan '{plan_id}'")
     return record
 
 

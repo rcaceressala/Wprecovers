@@ -203,3 +203,12 @@ def init_db() -> None:
                     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+
+            # marketing_engine.py — IaAutomatizacionStore (Módulo 7 ejecutado: fichas IA por plan)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ia_automatizacion (
+                    plan_id TEXT PRIMARY KEY,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)

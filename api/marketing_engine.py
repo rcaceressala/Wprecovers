@@ -16,6 +16,8 @@ from models import (
     ContentJobStatus,
     ContentPiece,
     ContentPiecesRecord,
+    IaAutomatizacionItem,
+    IaAutomatizacionRecord,
     MarketingActionTicketsRecord,
     MarketingGenerateRequest,
     MarketingPlan,
@@ -34,6 +36,7 @@ CONTENT_DIR = Path(__file__).parent / "content_pieces"
 ACTIONS_DIR = Path(__file__).parent / "action_tickets"
 MESSAGES_DIR = Path(__file__).parent / "whatsapp_messages"
 PLAN90_DIR = Path(__file__).parent / "plan90_tickets"
+IA_DIR = Path(__file__).parent / "ia_automatizacion"
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 32000
@@ -866,6 +869,253 @@ async def _run_whatsapp_job(plan_id: str, plan_record: MarketingPlanRecord) -> N
             error=str(exc),
         )
     WhatsAppMessageStore.save(record)
+
+
+# ---------------------------------------------------------------------------
+# IaAutomatizacionAgent — Módulo 7: estructura cada string de ia_automatizacion
+# (prosa) en una ficha ejecutable {herramienta, caso_uso, pasos, costo,
+# prioridad, estimacion} vía Claude. Mismo mecanismo que WhatsAppAgent.
+# ---------------------------------------------------------------------------
+
+_IA_JSON_SCHEMA = """\
+Responde ÚNICAMENTE con este JSON (sin texto adicional, sin bloques markdown):
+{
+  "items": [
+    {
+      "herramienta": "Klaviyo Predictive Analytics",
+      "caso_uso": "Segmentación predictiva para email marketing",
+      "pasos": ["Ir a Segments > Predictive analytics > High purchase likelihood", "..."],
+      "costo": "USD $20/mes",
+      "prioridad": "Alta",
+      "estimacion": 45,
+      "mejor_momento": "Tras acumular ≥100 pedidos para que el modelo predictivo tenga datos suficientes"
+    },
+    "... una entrada por cada recomendación de ia_automatizacion recibida, mismo orden, mismo número ..."
+  ]
+}"""
+
+_IA_SYSTEM_PROMPT = f"""Eres IaAutomatizacionAgent, especialista en automatización con IA para PYMEs LATAM
+dentro de WPRecover 2.0. Tu trabajo es tomar las recomendaciones de IA y Automatización (Módulo 7) de un
+plan de marketing ya aprobado y convertir cada una en una ficha ejecutable y estructurada — el negocio la
+usa como checklist de implementación.
+
+PRINCIPIOS:
+- Cada string de entrada es una recomendación en prosa que mezcla herramienta, caso de uso, pasos de
+  configuración y costo. Tu trabajo es SEPARAR esos componentes en campos limpios, sin inventar datos que
+  no estén en el texto original.
+- herramienta: el nombre concreto de la herramienta/IA (ej. "Klaviyo Predictive Analytics").
+- caso_uso: una sola línea de para qué sirve, orientada al negocio.
+- pasos: lista de pasos accionables de configuración, en orden, extraídos o inferidos razonablemente del
+  texto. Si el texto trae una ruta de dashboard o un prompt, consérvalo literal.
+- costo: el costo tal como aparece en el texto, conservando la moneda ("USD $20/mes", "CLP $7.000/mes",
+  "gratuito"). Si el texto no menciona costo, usa "no especificado".
+- prioridad: INFIÉRELA con criterio de impacto vs. esfuerzo para una PYME: Alta = alto impacto y setup
+  rápido/barato (quick win); Media = impacto medio o costo recurrente relevante; Baja = nice-to-have o
+  costo alto. Usa solo Alta, Media o Baja (nunca Critica).
+- estimacion: minutos realistas de setup inicial (no de operación continua).
+- mejor_momento: una sola línea que indique CUÁNDO conviene implementar o activar esta automatización,
+  inferida desde el caso de uso y el rubro del negocio. Orientada a la decisión del dueño de la PYME
+  (ej. "Antes de campañas de temporada alta (CyberDay, Navidad)", "Tras acumular ≥100 pedidos/mes",
+  "Desde el día 1, es un quick win sin requisitos previos", "Cuando el volumen de consultas en WhatsApp
+  supere lo que el equipo puede responder a mano"). No inventes cifras del negocio que no puedas inferir
+  razonablemente; si no hay un disparador claro, indica que puede implementarse de inmediato.
+- Respeta el orden y el número EXACTO de recomendaciones recibidas: una ficha por cada una.
+- Todo el contenido en español neutro LATAM.
+
+{_IA_JSON_SCHEMA}"""
+
+
+class IaAutomatizacionAgent:
+    NOMBRE = "IaAutomatizacionAgent"
+    MODEL = _MODEL
+
+    def run(
+        self, req: MarketingGenerateRequest, ia_automatizacion: List[str]
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            import anthropic as _anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic package not installed. Run: pip install 'anthropic>=0.40.0'"
+            ) from exc
+
+        client = _anthropic_client(_anthropic)
+        user_msg = self._build_user_message(req, ia_automatizacion)
+        messages = [{"role": "user", "content": user_msg}]
+
+        text, tokens, stop_reason = self._invoke(client, messages)
+        parsed = self._parse_json(text)
+        items = parsed.get("items") if parsed else None
+
+        if not items or len(items) != len(ia_automatizacion):
+            hint = (
+                "la respuesta se truncó por max_tokens — sube _MAX_TOKENS"
+                if stop_reason == "max_tokens"
+                else "la respuesta no es JSON válido o no tiene una ficha por cada recomendación recibida"
+            )
+            raise RuntimeError(
+                f"IaAutomatizacionAgent: no se pudieron estructurar las fichas ({hint}). "
+                f"stop_reason={stop_reason}, respuesta cruda (primeros 500 chars): {text[:500]!r}"
+            )
+
+        return items, tokens
+
+    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, str]:
+        with client.messages.stream(
+            model=self.MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=_IA_SYSTEM_PROMPT,
+            messages=messages,
+        ) as stream:
+            response = stream.get_final_message()
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        return text, tokens, response.stop_reason
+
+    @staticmethod
+    def _build_user_message(req: MarketingGenerateRequest, ia_automatizacion: List[str]) -> str:
+        recomendaciones_text = "\n".join(f"- {item}" for item in ia_automatizacion)
+        return (
+            f"DATOS DEL CLIENTE:\n"
+            f"Sitio: {req.site_url}\n"
+            f"Rubro: {req.business_type}\n"
+            f"Ciudad: {req.city}\n\n"
+            f"RECOMENDACIONES DE IA Y AUTOMATIZACIÓN A ESTRUCTURAR ({len(ia_automatizacion)} recomendaciones):\n"
+            f"{recomendaciones_text}\n\n"
+            "Convierte cada recomendación en una ficha ejecutable siguiendo exactamente el esquema indicado, "
+            "manteniendo el mismo orden y el mismo número de fichas."
+        )
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        clean = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
+        clean = re.sub(r"\s*```$", "", clean.strip())
+        try:
+            return json.loads(clean)
+        except Exception:
+            pass
+        match = re.search(r"\{[\s\S]*\}", clean)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception:
+                pass
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# IaAutomatizacionStore — Módulo 7 ejecutado: fichas IA por plan
+# ---------------------------------------------------------------------------
+
+class IaAutomatizacionStore:
+    @staticmethod
+    def _path(plan_id: str) -> Path:
+        IA_DIR.mkdir(parents=True, exist_ok=True)
+        return IA_DIR / f"{plan_id}.json"
+
+    @classmethod
+    def save(cls, record: IaAutomatizacionRecord) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ia_automatizacion (plan_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (plan_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (record.plan_id, Json(json.loads(record.model_dump_json()))),
+                )
+            return
+
+        cls._path(record.plan_id).write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, plan_id: str) -> Optional[IaAutomatizacionRecord]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM ia_automatizacion WHERE plan_id = %s", (plan_id,))
+                row = cur.fetchone()
+            return IaAutomatizacionRecord(**row[0]) if row else None
+
+        path = cls._path(plan_id)
+        if not path.exists():
+            return None
+        return IaAutomatizacionRecord(**json.loads(path.read_text(encoding="utf-8")))
+
+
+def _build_ia_items(
+    plan_id: str, project_id: Optional[str], raw_items: List[Dict[str, Any]]
+) -> List[IaAutomatizacionItem]:
+    """Completa las fichas que devuelve Claude (7 campos de contenido) con los
+    campos fijos/generados en Python: id, categoria, agente, estado, project_id."""
+    items: List[IaAutomatizacionItem] = []
+    for idx, raw in enumerate(raw_items, 1):
+        items.append(
+            IaAutomatizacionItem(
+                id=f"IA-{plan_id[-6:]}-{idx:02d}",
+                herramienta=raw.get("herramienta", ""),
+                caso_uso=raw.get("caso_uso", ""),
+                pasos=raw.get("pasos") or [],
+                costo=raw.get("costo") or "no especificado",
+                prioridad=raw.get("prioridad", Prioridad.Media),
+                estimacion=int(raw.get("estimacion", 30)),
+                mejor_momento=raw.get("mejor_momento", ""),
+                project_id=project_id,
+            )
+        )
+    return items
+
+
+async def start_iaautomatizacion_job(plan_id: str) -> IaAutomatizacionRecord:
+    """Ejecuta el Módulo 7 (IA y Automatización) de un plan ya generado: convierte
+    cada recomendación en prosa de ia_automatizacion en una ficha ejecutable vía
+    IaAutomatizacionAgent. Mismo patrón job-en-background + polling que
+    start_whatsapp_job. Idempotente: si ya hay fichas (DONE) o un job en curso
+    (RUNNING) para este plan_id, los devuelve sin volver a llamar a Claude.
+    """
+    cached = IaAutomatizacionStore.load(plan_id)
+    if cached and cached.status in (ContentJobStatus.DONE, ContentJobStatus.RUNNING):
+        return cached
+
+    plan_record = MarketingPlanStore.load(plan_id)
+    if not plan_record:
+        raise ValueError(f"No marketing plan found with id '{plan_id}'")
+
+    placeholder = IaAutomatizacionRecord(
+        plan_id=plan_id,
+        items=[],
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status=ContentJobStatus.RUNNING,
+    )
+    IaAutomatizacionStore.save(placeholder)
+    asyncio.create_task(_run_iaautomatizacion_job(plan_id, plan_record))
+    return placeholder
+
+
+async def _run_iaautomatizacion_job(plan_id: str, plan_record: MarketingPlanRecord) -> None:
+    agent = IaAutomatizacionAgent()
+    try:
+        raw_items, _tokens = await asyncio.to_thread(
+            agent.run, plan_record.request, plan_record.plan.ia_automatizacion
+        )
+        items = _build_ia_items(plan_id, plan_record.request.project_id, raw_items)
+        record = IaAutomatizacionRecord(
+            plan_id=plan_id,
+            items=items,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.DONE,
+        )
+    except Exception as exc:
+        record = IaAutomatizacionRecord(
+            plan_id=plan_id,
+            items=[],
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.FAILED,
+            error=str(exc),
+        )
+    IaAutomatizacionStore.save(record)
 
 
 async def _build_audit_context(site_url: str) -> Tuple[str, Optional[float], Optional[float]]:

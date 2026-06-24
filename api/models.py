@@ -525,6 +525,32 @@ class Plan90DiasTicketsRecord(BaseModel):
     error: Optional[str] = None
 
 
+class IaAutomatizacionItem(BaseModel):
+    id: str
+    herramienta: str
+    caso_uso: str
+    pasos: List[str] = []
+    costo: str
+    prioridad: Prioridad
+    estimacion: int = Field(..., description="Setup time in minutes")
+    mejor_momento: str = Field(
+        default="",
+        description="Cuándo conviene implementar/activar la automatización (texto libre inferido)",
+    )
+    categoria: Categoria = Categoria.Marketing
+    agente: str = "IaAutomatizacionAgent"
+    estado: EstadoTicket = EstadoTicket.OPEN
+    project_id: Optional[str] = None
+
+
+class IaAutomatizacionRecord(BaseModel):
+    plan_id: str
+    items: List[IaAutomatizacionItem] = []
+    created_at: str
+    status: ContentJobStatus = ContentJobStatus.DONE
+    error: Optional[str] = None
+
+
 class WhatsAppMessage(BaseModel):
     categoria: str
     mensaje_texto: str
