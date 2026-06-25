@@ -1447,13 +1447,14 @@ class MarketingPlanPDF:
         ))
         story.append(Spacer(1, 4))
         story.append(Paragraph(
-            f"Plan de Marketing — {req.site_url}",
+            f"Plan de Marketing — {cls._esc(req.site_url)}",
             style("sub", fontSize=12, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
         ))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor(cls._BLUE), spaceAfter=10))
         story.append(Paragraph(
-            f"Rubro: {req.business_type} · Ciudad: {req.city} · Presupuesto: {req.monthly_budget} · "
-            f"Paquete: {req.plan} · Fecha: {datetime.now().strftime('%d/%m/%Y')}",
+            f"Rubro: {cls._esc(req.business_type)} · Ciudad: {cls._esc(req.city)} · "
+            f"Presupuesto: {cls._esc(req.monthly_budget)} · "
+            f"Paquete: {cls._esc(req.plan)} · Fecha: {datetime.now().strftime('%d/%m/%Y')}",
             style("meta", fontSize=9, textColor=colors.HexColor(cls._GRAY)),
         ))
         story.append(Spacer(1, 14))
@@ -1476,11 +1477,25 @@ class MarketingPlanPDF:
         return pdf_path
 
     @staticmethod
-    def _render_section(key: str, value: Any) -> List[str]:
+    def _esc(text: Any) -> str:
+        """Escapa los caracteres especiales de XML para que el mini-parser de
+        markup de ReportLab (Paragraph) no se rompa con &, <, > crudos en el
+        texto del plan ('paraparser: ... unclosed tags'). El markup intencional
+        (<b>, <i>, &nbsp;) lo añade el caller DESPUÉS de escapar."""
+        return (
+            str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    @classmethod
+    def _render_section(cls, key: str, value: Any) -> List[str]:
+        esc = cls._esc
         if key == "calendario_contenido":
             return [
-                f"<b>Día {item['dia']}</b> — {item['objetivo']} ({item['formato']}): "
-                f"{item['guion']} <i>CTA: {item['cta']}</i>"
+                f"<b>Día {esc(item['dia'])}</b> — {esc(item['objetivo'])} ({esc(item['formato'])}): "
+                f"{esc(item['guion'])} <i>CTA: {esc(item['cta'])}</i>"
                 for item in value
             ]
         if key == "plan_ejecucion_90_dias":
@@ -1490,9 +1505,9 @@ class MarketingPlanPDF:
                 ("Mes 2", "mes_2"), ("Mes 3", "mes_3"),
             ]:
                 lines.append(f"<b>{period_label}:</b>")
-                lines.extend(f"&nbsp;&nbsp;• {item}" for item in value[period_key])
+                lines.extend(f"&nbsp;&nbsp;• {esc(item)}" for item in value[period_key])
             return lines
-        return [f"• {item}" for item in value]
+        return [f"• {esc(item)}" for item in value]
 
 
 # ---------------------------------------------------------------------------

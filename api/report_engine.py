@@ -255,6 +255,20 @@ class BeforeAfterReport:
     _GRAY = "#6B7280"
     _LIGHT = "#F3F4F6"
 
+    @staticmethod
+    def _esc(text: Any) -> str:
+        """Escapa los caracteres especiales de XML para que el mini-parser de
+        markup de ReportLab (Paragraph) no se rompa con &, <, > crudos en el
+        texto libre ('paraparser: ... unclosed tags'). El markup intencional
+        (<b>, <font>) lo añade el caller DESPUÉS de escapar. NO aplicar a celdas
+        de Table: esas no se parsean como markup y mostrarían &amp; literal."""
+        return (
+            str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
     @classmethod
     def generate(
         cls,
@@ -443,7 +457,7 @@ class BeforeAfterReport:
                 ))
                 for label in failed_checks:
                     story.append(Paragraph(
-                        f'<font color="{cls._RED}">✗</font>  {label}',
+                        f'<font color="{cls._RED}">✗</font>  {cls._esc(label)}',
                         style("issue", fontSize=11, leftIndent=8, spaceAfter=3),
                     ))
                 story.append(Spacer(1, 12))
@@ -454,7 +468,7 @@ class BeforeAfterReport:
             ))
             for label in checks_fixed:
                 story.append(Paragraph(
-                    f'<font color="{cls._GREEN}">✓</font>  {label}',
+                    f'<font color="{cls._GREEN}">✓</font>  {cls._esc(label)}',
                     style("fix", fontSize=11, leftIndent=8, spaceAfter=3),
                 ))
             story.append(Spacer(1, 12))
@@ -464,11 +478,11 @@ class BeforeAfterReport:
             "<b>Resumen Ejecutivo</b>",
             style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceAfter=4),
         ))
-        story.append(Paragraph(resumen_ejecutivo, style("body", fontSize=11, spaceAfter=10)))
+        story.append(Paragraph(cls._esc(resumen_ejecutivo), style("body", fontSize=11, spaceAfter=10)))
 
         if req.notas:
             story.append(Paragraph("<b>Notas adicionales:</b>", style("nb", fontSize=11, spaceAfter=2)))
-            story.append(Paragraph(req.notas, style("nc", fontSize=10)))
+            story.append(Paragraph(cls._esc(req.notas), style("nc", fontSize=10)))
             story.append(Spacer(1, 10))
 
         # ── Footer ────────────────────────────────────────────────────────────
