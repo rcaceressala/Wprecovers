@@ -10,6 +10,7 @@ import {
   type MarketingPlanRecord, type MarketingGenerateRequest,
   type MonthlyBudget, type WprecoverPlan, type ProjectSummary,
   type ContentPiece, type Ticket, type Prioridad, type WhatsAppMessage,
+  type IaAutomatizacionItem, type MetricaItem,
 } from '@/lib/api'
 
 const BUDGET_LABELS: Record<MonthlyBudget, string> = {
@@ -170,6 +171,65 @@ function ActionTicketRow({ ticket }: { ticket: Ticket }) {
 }
 
 // ---------------------------------------------------------------------------
+// IA automation card — created by execute-iaautomatizacion (Módulo 7)
+// ---------------------------------------------------------------------------
+function IaAutomatizacionRow({ item }: { item: IaAutomatizacionItem }) {
+  return (
+    <div className="bg-surface border border-border rounded-lg p-3 space-y-2">
+      <div className="flex items-start gap-3">
+        <span className={`${PRIO_CLS[item.prioridad]} flex-shrink-0`}>{item.prioridad}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-bright">{item.herramienta}</p>
+          <p className="text-sm text-dim">{item.caso_uso}</p>
+        </div>
+      </div>
+      {item.pasos.length > 0 && (
+        <ol className="list-decimal list-inside space-y-1 pl-1">
+          {item.pasos.map((paso, i) => (
+            <li key={i} className="text-xs text-dim">{paso}</li>
+          ))}
+        </ol>
+      )}
+      <p className="text-[10px] text-muted font-mono">
+        {item.id} · Costo: {item.costo} · {item.estimacion}m setup
+      </p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Métrica card — created by execute-metricasclave (Módulo 8)
+// ---------------------------------------------------------------------------
+function MetricaRow({ item }: { item: MetricaItem }) {
+  return (
+    <div className="bg-surface border border-border rounded-lg p-3 space-y-2">
+      <div className="flex items-start gap-3">
+        {item.frecuencia_revision && (
+          <span className="badge-media flex-shrink-0">{item.frecuencia_revision}</span>
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-bright">{item.nombre}</p>
+          <p className="text-sm text-dim">{item.formula}</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-dim">
+        <p><span className="text-muted">Benchmark:</span> {item.benchmark}</p>
+        <p><span className="text-muted">Objetivo:</span> {item.objetivo}</p>
+      </div>
+      {item.donde_medir.length > 0 && (
+        <p className="text-xs text-dim">
+          <span className="text-muted">Medir en:</span> {item.donde_medir.join(' · ')}
+        </p>
+      )}
+      {item.mejor_momento && (
+        <p className="text-xs text-dim"><span className="text-muted">Mejor momento:</span> {item.mejor_momento}</p>
+      )}
+      <p className="text-[10px] text-muted font-mono">{item.id}</p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Plan display — 9 modules
 // ---------------------------------------------------------------------------
 function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; planId: string }) {
@@ -188,6 +248,14 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
   const [plan90Tickets, setPlan90Tickets] = useState<Ticket[] | null>(null)
   const [creatingPlan90, setCreatingPlan90] = useState(false)
   const [plan90Error, setPlan90Error] = useState<string | null>(null)
+
+  const [iaItems, setIaItems] = useState<IaAutomatizacionItem[] | null>(null)
+  const [creatingIa, setCreatingIa] = useState(false)
+  const [iaError, setIaError] = useState<string | null>(null)
+
+  const [metricaItems, setMetricaItems] = useState<MetricaItem[] | null>(null)
+  const [creatingMetricas, setCreatingMetricas] = useState(false)
+  const [metricasError, setMetricasError] = useState<string | null>(null)
 
   const handleCreatePlan90Tickets = async () => {
     setCreatingPlan90(true)
@@ -212,6 +280,58 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
     } catch (e: unknown) {
       setPlan90Error(e instanceof Error ? e.message : 'Error al crear los tickets')
       setCreatingPlan90(false)
+    }
+  }
+
+  const handleCreateIaAutomatizacion = async () => {
+    setCreatingIa(true)
+    setIaError(null)
+    try {
+      await api.executeMarketingIaAutomatizacion(planId)
+      const poll = async () => {
+        const record = await api.getMarketingIaAutomatizacion(planId)
+        if (record.status === 'DONE') {
+          setIaItems(record.items)
+          setCreatingIa(false)
+          return
+        }
+        if (record.status === 'FAILED') {
+          setIaError(record.error ?? 'Error al generar las fichas')
+          setCreatingIa(false)
+          return
+        }
+        setTimeout(poll, 5000)
+      }
+      poll()
+    } catch (e: unknown) {
+      setIaError(e instanceof Error ? e.message : 'Error al generar las fichas')
+      setCreatingIa(false)
+    }
+  }
+
+  const handleCreateMetricas = async () => {
+    setCreatingMetricas(true)
+    setMetricasError(null)
+    try {
+      await api.executeMarketingMetricas(planId)
+      const poll = async () => {
+        const record = await api.getMarketingMetricas(planId)
+        if (record.status === 'DONE') {
+          setMetricaItems(record.items)
+          setCreatingMetricas(false)
+          return
+        }
+        if (record.status === 'FAILED') {
+          setMetricasError(record.error ?? 'Error al generar las métricas')
+          setCreatingMetricas(false)
+          return
+        }
+        setTimeout(poll, 5000)
+      }
+      poll()
+    } catch (e: unknown) {
+      setMetricasError(e instanceof Error ? e.message : 'Error al generar las métricas')
+      setCreatingMetricas(false)
     }
   }
 
@@ -417,11 +537,57 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
       </Section>
 
       <Section title="7. IA y Automatización">
-        <BulletList items={plan.ia_automatizacion} />
+        <div className="space-y-3">
+          {iaItems
+            ? iaItems.map((item) => <IaAutomatizacionRow key={item.id} item={item} />)
+            : <BulletList items={plan.ia_automatizacion} />}
+
+          {!iaItems && (
+            <button
+              className="btn-primary flex items-center gap-2 w-full justify-center"
+              onClick={handleCreateIaAutomatizacion}
+              disabled={creatingIa}
+            >
+              {creatingIa
+                ? <><RefreshCw className="w-4 h-4 animate-spin" /> Generando fichas…</>
+                : <><Wand2 className="w-4 h-4" /> Generar fichas ejecutables</>}
+            </button>
+          )}
+
+          {iaError && (
+            <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                            text-sm rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4" /> {iaError}
+            </div>
+          )}
+        </div>
       </Section>
 
       <Section title="8. Métricas Clave">
-        <BulletList items={plan.metricas_clave} />
+        <div className="space-y-3">
+          {metricaItems
+            ? metricaItems.map((item) => <MetricaRow key={item.id} item={item} />)
+            : <BulletList items={plan.metricas_clave} />}
+
+          {!metricaItems && (
+            <button
+              className="btn-primary flex items-center gap-2 w-full justify-center"
+              onClick={handleCreateMetricas}
+              disabled={creatingMetricas}
+            >
+              {creatingMetricas
+                ? <><RefreshCw className="w-4 h-4 animate-spin" /> Generando métricas…</>
+                : <><Wand2 className="w-4 h-4" /> Generar fichas de métricas</>}
+            </button>
+          )}
+
+          {metricasError && (
+            <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 text-danger
+                            text-sm rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4" /> {metricasError}
+            </div>
+          )}
+        </div>
       </Section>
 
       <Section title="9. Top 10 Acciones Inmediatas" defaultOpen>

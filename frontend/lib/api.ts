@@ -339,6 +339,51 @@ export interface WhatsAppMessagesRecord {
   error?: string | null
 }
 
+export interface IaAutomatizacionItem {
+  id: string
+  herramienta: string
+  caso_uso: string
+  pasos: string[]
+  costo: string
+  prioridad: Prioridad
+  estimacion: number
+  categoria: Categoria
+  agente: string
+  estado: EstadoTicket
+  project_id?: string | null
+}
+
+export interface IaAutomatizacionRecord {
+  plan_id: string
+  items: IaAutomatizacionItem[]
+  created_at: string
+  status: ContentJobStatus
+  error?: string | null
+}
+
+export interface MetricaItem {
+  id: string
+  nombre: string
+  formula: string
+  benchmark: string
+  objetivo: string
+  donde_medir: string[]
+  frecuencia_revision: string
+  mejor_momento: string
+  categoria: Categoria
+  agente: string
+  estado: EstadoTicket
+  project_id?: string | null
+}
+
+export interface MetricasClaveRecord {
+  plan_id: string
+  items: MetricaItem[]
+  created_at: string
+  status: ContentJobStatus
+  error?: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
@@ -529,6 +574,14 @@ export const api = {
     apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/execute-plan90`, { method: 'POST' }),
   getMarketingPlan90: (planId: string) =>
     apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/plan90`),
+  executeMarketingIaAutomatizacion: (planId: string) =>
+    apiFetch<IaAutomatizacionRecord>(`/marketing/${planId}/execute-iaautomatizacion`, { method: 'POST' }),
+  getMarketingIaAutomatizacion: (planId: string) =>
+    apiFetch<IaAutomatizacionRecord>(`/marketing/${planId}/iaautomatizacion`),
+  executeMarketingMetricas: (planId: string) =>
+    apiFetch<MetricasClaveRecord>(`/marketing/${planId}/execute-metricasclave`, { method: 'POST' }),
+  getMarketingMetricas: (planId: string) =>
+    apiFetch<MetricasClaveRecord>(`/marketing/${planId}/metricasclave`),
 }
 
 // ---------------------------------------------------------------------------

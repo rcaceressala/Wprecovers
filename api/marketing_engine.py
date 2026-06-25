@@ -22,6 +22,8 @@ from models import (
     MarketingGenerateRequest,
     MarketingPlan,
     MarketingPlanRecord,
+    MetricaItem,
+    MetricasClaveRecord,
     Plan90Dias,
     Plan90DiasTicketsRecord,
     Prioridad,
@@ -37,6 +39,7 @@ ACTIONS_DIR = Path(__file__).parent / "action_tickets"
 MESSAGES_DIR = Path(__file__).parent / "whatsapp_messages"
 PLAN90_DIR = Path(__file__).parent / "plan90_tickets"
 IA_DIR = Path(__file__).parent / "ia_automatizacion"
+METRICAS_DIR = Path(__file__).parent / "metricas_clave"
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 32000
@@ -1116,6 +1119,253 @@ async def _run_iaautomatizacion_job(plan_id: str, plan_record: MarketingPlanReco
             error=str(exc),
         )
     IaAutomatizacionStore.save(record)
+
+
+# ---------------------------------------------------------------------------
+# MetricasClaveAgent — Módulo 8: estructura cada string de metricas_clave
+# (prosa) en una ficha de métrica {nombre, formula, benchmark, objetivo,
+# donde_medir, frecuencia_revision, mejor_momento} vía Claude. Mismo mecanismo
+# que IaAutomatizacionAgent.
+# ---------------------------------------------------------------------------
+
+_METRICA_JSON_SCHEMA = """\
+Responde ÚNICAMENTE con este JSON (sin texto adicional, sin bloques markdown):
+{
+  "items": [
+    {
+      "nombre": "ROAS (Retorno sobre Inversión en Publicidad)",
+      "formula": "Ingresos atribuidos a la campaña / Gasto publicitario de esa campaña",
+      "benchmark": "Mínimo aceptable 3x",
+      "objetivo": "Alcanzar 5x a mes 3",
+      "donde_medir": ["Google Ads (conversiones e-commerce con GA4)", "Meta Ads Manager (ROAS de conversión en sitio web)"],
+      "frecuencia_revision": "Semanal",
+      "mejor_momento": "Desde la primera campaña pagada activa; clave durante temporada alta"
+    },
+    "... una entrada por cada métrica de metricas_clave recibida, mismo orden, mismo número ..."
+  ]
+}"""
+
+_METRICA_SYSTEM_PROMPT = f"""Eres MetricasClaveAgent, especialista en analítica de marketing para PYMEs LATAM
+dentro de WPRecover 2.0. Tu trabajo es tomar las Métricas Clave (Módulo 8) de un plan de marketing ya
+aprobado y convertir cada una en una ficha estructurada — el negocio la usa como tablero de seguimiento.
+
+PRINCIPIOS:
+- Cada string de entrada es una métrica en prosa que mezcla nombre, definición/fórmula, benchmark del
+  rubro, objetivo del negocio, dónde medirla y cada cuánto revisarla. Tu trabajo es SEPARAR esos
+  componentes en campos limpios, sin inventar datos que no estén en el texto original.
+- nombre: el nombre de la métrica con su sigla si la tiene (ej. "ROAS (Retorno sobre Inversión en Publicidad)").
+- formula: cómo se calcula la métrica, en una línea. Si el texto trae un ejemplo numérico, puedes resumirlo
+  pero prioriza la fórmula. Si no hay fórmula explícita, describe brevemente qué mide.
+- benchmark: el rango/valor de referencia del rubro tal como aparece ("1-3%", "mínimo 3x", "5-15%"). Si el
+  texto no menciona benchmark, usa "no especificado".
+- objetivo: la meta concreta del negocio para esta métrica ("superar 2.5% a mes 3", "5x a mes 3",
+  "+15% mes 1 a mes 3"). Si no hay objetivo explícito, usa "no especificado".
+- donde_medir: lista de las herramientas/paneles donde se mide, extraídas del texto (ej. ["Google Ads",
+  "GA4", "WooCommerce > Informes"]). Una entrada por herramienta.
+- frecuencia_revision: cada cuánto revisar la métrica tal como aparece ("Semanal", "Quincenal", "Mensual").
+  Respeta el texto; si no se menciona, infiere con criterio (métricas de pauta → semanal; de catálogo/SEO →
+  mensual) y deja el valor en español capitalizado.
+- mejor_momento: una sola línea que indique CUÁNDO esta métrica se vuelve relevante o desde cuándo conviene
+  empezar a medirla, inferida desde el caso de uso (ej. "Desde la primera campaña pagada activa",
+  "Tras acumular ≥100 pedidos para que el dato sea representativo", "Desde el día 1, es una métrica base").
+  No inventes cifras que no puedas inferir razonablemente.
+- Respeta el orden y el número EXACTO de métricas recibidas: una ficha por cada una.
+- Todo el contenido en español neutro LATAM.
+
+{_METRICA_JSON_SCHEMA}"""
+
+
+class MetricasClaveAgent:
+    NOMBRE = "MetricasClaveAgent"
+    MODEL = _MODEL
+
+    def run(
+        self, req: MarketingGenerateRequest, metricas_clave: List[str]
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            import anthropic as _anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic package not installed. Run: pip install 'anthropic>=0.40.0'"
+            ) from exc
+
+        client = _anthropic_client(_anthropic)
+        user_msg = self._build_user_message(req, metricas_clave)
+        messages = [{"role": "user", "content": user_msg}]
+
+        text, tokens, stop_reason = self._invoke(client, messages)
+        parsed = self._parse_json(text)
+        items = parsed.get("items") if parsed else None
+
+        if not items or len(items) != len(metricas_clave):
+            hint = (
+                "la respuesta se truncó por max_tokens — sube _MAX_TOKENS"
+                if stop_reason == "max_tokens"
+                else "la respuesta no es JSON válido o no tiene una ficha por cada métrica recibida"
+            )
+            raise RuntimeError(
+                f"MetricasClaveAgent: no se pudieron estructurar las métricas ({hint}). "
+                f"stop_reason={stop_reason}, respuesta cruda (primeros 500 chars): {text[:500]!r}"
+            )
+
+        return items, tokens
+
+    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, str]:
+        with client.messages.stream(
+            model=self.MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=_METRICA_SYSTEM_PROMPT,
+            messages=messages,
+        ) as stream:
+            response = stream.get_final_message()
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        return text, tokens, response.stop_reason
+
+    @staticmethod
+    def _build_user_message(req: MarketingGenerateRequest, metricas_clave: List[str]) -> str:
+        metricas_text = "\n".join(f"- {item}" for item in metricas_clave)
+        return (
+            f"DATOS DEL CLIENTE:\n"
+            f"Sitio: {req.site_url}\n"
+            f"Rubro: {req.business_type}\n"
+            f"Ciudad: {req.city}\n\n"
+            f"MÉTRICAS CLAVE A ESTRUCTURAR ({len(metricas_clave)} métricas):\n"
+            f"{metricas_text}\n\n"
+            "Convierte cada métrica en una ficha estructurada siguiendo exactamente el esquema indicado, "
+            "manteniendo el mismo orden y el mismo número de fichas."
+        )
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        clean = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
+        clean = re.sub(r"\s*```$", "", clean.strip())
+        try:
+            return json.loads(clean)
+        except Exception:
+            pass
+        match = re.search(r"\{[\s\S]*\}", clean)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception:
+                pass
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# MetricasClaveStore — Módulo 8 ejecutado: métricas estructuradas por plan
+# ---------------------------------------------------------------------------
+
+class MetricasClaveStore:
+    @staticmethod
+    def _path(plan_id: str) -> Path:
+        METRICAS_DIR.mkdir(parents=True, exist_ok=True)
+        return METRICAS_DIR / f"{plan_id}.json"
+
+    @classmethod
+    def save(cls, record: MetricasClaveRecord) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO metricas_clave (plan_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (plan_id) DO UPDATE SET data = EXCLUDED.data
+                    """,
+                    (record.plan_id, Json(json.loads(record.model_dump_json()))),
+                )
+            return
+
+        cls._path(record.plan_id).write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, plan_id: str) -> Optional[MetricasClaveRecord]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT data FROM metricas_clave WHERE plan_id = %s", (plan_id,))
+                row = cur.fetchone()
+            return MetricasClaveRecord(**row[0]) if row else None
+
+        path = cls._path(plan_id)
+        if not path.exists():
+            return None
+        return MetricasClaveRecord(**json.loads(path.read_text(encoding="utf-8")))
+
+
+def _build_metrica_items(
+    plan_id: str, project_id: Optional[str], raw_items: List[Dict[str, Any]]
+) -> List[MetricaItem]:
+    """Completa las fichas que devuelve Claude (7 campos de contenido) con los
+    campos fijos/generados en Python: id, categoria, agente, estado, project_id."""
+    items: List[MetricaItem] = []
+    for idx, raw in enumerate(raw_items, 1):
+        items.append(
+            MetricaItem(
+                id=f"MET-{plan_id[-6:]}-{idx:02d}",
+                nombre=raw.get("nombre", ""),
+                formula=raw.get("formula", ""),
+                benchmark=raw.get("benchmark") or "no especificado",
+                objetivo=raw.get("objetivo") or "no especificado",
+                donde_medir=raw.get("donde_medir") or [],
+                frecuencia_revision=raw.get("frecuencia_revision", ""),
+                mejor_momento=raw.get("mejor_momento", ""),
+                project_id=project_id,
+            )
+        )
+    return items
+
+
+async def start_metricasclave_job(plan_id: str) -> MetricasClaveRecord:
+    """Ejecuta el Módulo 8 (Métricas Clave) de un plan ya generado: convierte cada
+    métrica en prosa de metricas_clave en una ficha estructurada vía
+    MetricasClaveAgent. Mismo patrón job-en-background + polling que
+    start_iaautomatizacion_job. Idempotente: si ya hay fichas (DONE) o un job en
+    curso (RUNNING) para este plan_id, los devuelve sin volver a llamar a Claude.
+    """
+    cached = MetricasClaveStore.load(plan_id)
+    if cached and cached.status in (ContentJobStatus.DONE, ContentJobStatus.RUNNING):
+        return cached
+
+    plan_record = MarketingPlanStore.load(plan_id)
+    if not plan_record:
+        raise ValueError(f"No marketing plan found with id '{plan_id}'")
+
+    placeholder = MetricasClaveRecord(
+        plan_id=plan_id,
+        items=[],
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status=ContentJobStatus.RUNNING,
+    )
+    MetricasClaveStore.save(placeholder)
+    asyncio.create_task(_run_metricasclave_job(plan_id, plan_record))
+    return placeholder
+
+
+async def _run_metricasclave_job(plan_id: str, plan_record: MarketingPlanRecord) -> None:
+    agent = MetricasClaveAgent()
+    try:
+        raw_items, _tokens = await asyncio.to_thread(
+            agent.run, plan_record.request, plan_record.plan.metricas_clave
+        )
+        items = _build_metrica_items(plan_id, plan_record.request.project_id, raw_items)
+        record = MetricasClaveRecord(
+            plan_id=plan_id,
+            items=items,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.DONE,
+        )
+    except Exception as exc:
+        record = MetricasClaveRecord(
+            plan_id=plan_id,
+            items=[],
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status=ContentJobStatus.FAILED,
+            error=str(exc),
+        )
+    MetricasClaveStore.save(record)
 
 
 async def _build_audit_context(site_url: str) -> Tuple[str, Optional[float], Optional[float]]:

@@ -53,12 +53,14 @@ from marketing_engine import (
     IaAutomatizacionStore,
     MarketingActionTicketsStore,
     MarketingPlanStore,
+    MetricasClaveStore,
     Plan90DiasTicketsStore,
     WhatsAppMessageStore,
     generate_marketing_plan,
     start_actions_job,
     start_content_job,
     start_iaautomatizacion_job,
+    start_metricasclave_job,
     start_plan90_job,
     start_whatsapp_job,
 )
@@ -1138,6 +1140,35 @@ def get_marketing_iaautomatizacion(plan_id: str):
     record = IaAutomatizacionStore.load(plan_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No iaautomatizacion job found for plan '{plan_id}'")
+    return record
+
+
+@app.post("/marketing/{plan_id}/execute-metricasclave", status_code=202, tags=["M10 Marketing OS"])
+async def marketing_execute_metricasclave(plan_id: str):
+    """
+    Lanza el Módulo 8 (Métricas Clave) de un plan ya generado: convierte cada
+    métrica en prosa de metricas_clave en una ficha estructurada (nombre, fórmula,
+    benchmark, objetivo, dónde medir, frecuencia de revisión, mejor momento) usando
+    MetricasClaveAgent.
+
+    Responde de inmediato (status RUNNING) y corre la llamada a Claude en
+    background — consultar el resultado con GET /marketing/{plan_id}/metricasclave.
+    Idempotente: si ya se ejecutó antes para este plan_id, devuelve el resultado
+    guardado sin volver a llamar a Claude.
+    """
+    try:
+        record = await start_metricasclave_job(plan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return record
+
+
+@app.get("/marketing/{plan_id}/metricasclave", tags=["M10 Marketing OS"])
+def get_marketing_metricasclave(plan_id: str):
+    """Consulta el estado/resultado del job de métricas lanzado por execute-metricasclave."""
+    record = MetricasClaveStore.load(plan_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No metricasclave job found for plan '{plan_id}'")
     return record
 
 

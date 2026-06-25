@@ -551,6 +551,32 @@ class IaAutomatizacionRecord(BaseModel):
     error: Optional[str] = None
 
 
+class MetricaItem(BaseModel):
+    id: str
+    nombre: str
+    formula: str
+    benchmark: str
+    objetivo: str
+    donde_medir: List[str] = []
+    frecuencia_revision: str = ""
+    mejor_momento: str = Field(
+        default="",
+        description="Cuándo empezar a medir o cuándo esta métrica se vuelve relevante (texto libre inferido)",
+    )
+    categoria: Categoria = Categoria.Marketing
+    agente: str = "MetricasClaveAgent"
+    estado: EstadoTicket = EstadoTicket.OPEN
+    project_id: Optional[str] = None
+
+
+class MetricasClaveRecord(BaseModel):
+    plan_id: str
+    items: List[MetricaItem] = []
+    created_at: str
+    status: ContentJobStatus = ContentJobStatus.DONE
+    error: Optional[str] = None
+
+
 class WhatsAppMessage(BaseModel):
     categoria: str
     mensaje_texto: str
