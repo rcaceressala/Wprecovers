@@ -497,6 +497,335 @@ class BeforeAfterReport:
 
 
 # ---------------------------------------------------------------------------
+# FullProjectReport — single on-demand PDF aggregating audit + marketing
+# ---------------------------------------------------------------------------
+
+class FullProjectReport:
+    """
+    Builds ONE downloadable PDF per project, on-demand and in-memory (no disk),
+    aggregating everything that already exists in the stores:
+
+      1. Portada            — cliente, URL, Recovery Score antes/después, fecha
+      2. Diagnóstico técnico — tickets derivados de project.checks_before
+      3. Plan de marketing   — los 9 módulos del plan base (si existe)
+      4. Módulos M10 ejecutados (solo los que tengan datos):
+           M3 Contenido · M5 WhatsApp · M6 Plan 90 días ·
+           M7 IA/Automatización · M8 Métricas · M9 Top 10 acciones
+      5. Footer WPRecover
+
+    Cada bloque se OMITE elegantemente si no hay datos — el PDF solo muestra lo
+    que existe. Reutiliza BeforeAfterReport._esc + la paleta de marca y, para el
+    plan base, MarketingPlanPDF._render_section.
+    """
+
+    _BLUE = BeforeAfterReport._BLUE
+    _GREEN = BeforeAfterReport._GREEN
+    _RED = BeforeAfterReport._RED
+    _GRAY = BeforeAfterReport._GRAY
+    _LIGHT = BeforeAfterReport._LIGHT
+
+    _esc = staticmethod(BeforeAfterReport._esc)
+
+    # Prioridad -> color de etiqueta (paleta de marca existente)
+    _PRIO_COLOR = {
+        "Critica": _RED,
+        "Alta": _RED,
+        "Media": _BLUE,
+        "Baja": _GRAY,
+    }
+
+    @classmethod
+    def generate(
+        cls,
+        project: Any,
+        tickets: Optional[List[Any]] = None,
+        marketing: Optional[Any] = None,
+        content: Optional[Any] = None,
+        whatsapp: Optional[Any] = None,
+        plan90: Optional[Any] = None,
+        ia: Optional[Any] = None,
+        metricas: Optional[Any] = None,
+        actions: Optional[Any] = None,
+    ) -> bytes:
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.enums import TA_CENTER
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+            from reportlab.lib.units import cm
+            from reportlab.platypus import (
+                HRFlowable,
+                PageBreak,
+                Paragraph,
+                SimpleDocTemplate,
+                Spacer,
+                Table,
+                TableStyle,
+            )
+        except ImportError as exc:
+            raise RuntimeError("reportlab not installed. Run: pip install reportlab") from exc
+
+        # _render_section / _SECTION_TITLES reusados del PDF de marketing. Import
+        # diferido: marketing_engine no importa report_engine, así que no hay ciclo,
+        # pero lo dejamos local para no acoplar el import de este módulo.
+        from marketing_engine import MarketingPlanPDF
+
+        import io
+
+        esc = cls._esc
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            rightMargin=2 * cm, leftMargin=2 * cm,
+            topMargin=2 * cm, bottomMargin=2 * cm,
+        )
+        styles = getSampleStyleSheet()
+
+        def style(name: str, **kw) -> ParagraphStyle:
+            return ParagraphStyle(name, parent=styles["Normal"], **kw)
+
+        def h2(text: str):
+            return Paragraph(
+                f"<b>{esc(text)}</b>",
+                style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceBefore=4, spaceAfter=6),
+            )
+
+        def body(text: str, **kw):
+            kw.setdefault("fontSize", 9.5)
+            kw.setdefault("leading", 13)
+            kw.setdefault("spaceAfter", 3)
+            return Paragraph(text, style("body", **kw))
+
+        story: List[Any] = []
+
+        # ── 1. Portada ─────────────────────────────────────────────────────────
+        story.append(Paragraph(
+            "<b>WPRecover</b>",
+            style("h1", fontSize=26, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER, leading=32),
+        ))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            "Reporte Integral de Proyecto",
+            style("sub", fontSize=13, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
+        ))
+        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor(cls._BLUE), spaceAfter=10))
+
+        info = [
+            ["Cliente:", esc(project.client_name), "Plan:", esc(project.plan)],
+            ["Sitio:", esc(project.site_url), "Estado:", esc(getattr(project.status, "value", project.status))],
+            ["Fecha:", datetime.now().strftime("%d/%m/%Y"), "Proyecto:", esc(project.id)],
+        ]
+        info_table = Table(info, colWidths=[3 * cm, 6.5 * cm, 2.5 * cm, 4.5 * cm])
+        info_table.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(info_table)
+        story.append(Spacer(1, 12))
+
+        sb = project.score_before
+        sa = project.score_after
+        if sb is not None and sa is not None:
+            delta = round(sa - sb, 1)
+            delta_str = f"+{delta:.1f}" if delta >= 0 else f"{delta:.1f}"
+            score_data = [
+                ["Recovery Score", "Antes", "Después", "Mejora"],
+                ["Score General", f"{sb:.1f}", f"{sa:.1f}", delta_str],
+            ]
+            score_table = Table(score_data, colWidths=[6 * cm, 3.5 * cm, 3.5 * cm, 3.5 * cm])
+            score_col = colors.HexColor(cls._GREEN if delta >= 0 else cls._RED)
+        else:
+            score_now = sb if sb is not None else (sa if sa is not None else 0.0)
+            score_data = [
+                ["Recovery Score", "Resultado"],
+                ["Score General", f"{score_now:.1f} / 100"],
+            ]
+            score_table = Table(score_data, colWidths=[8 * cm, 8 * cm])
+            score_col = colors.HexColor(cls._BLUE)
+
+        score_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(cls._BLUE)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 11),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor(cls._LIGHT)),
+            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+            ("FONTSIZE", (0, 1), (-1, -1), 13),
+            ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+            ("TEXTCOLOR", (-1, 1), (-1, -1), score_col),
+            ("FONTNAME", (-1, 1), (-1, -1), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.white),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        story.append(score_table)
+        story.append(Spacer(1, 14))
+
+        # ── 2. Diagnóstico técnico ───────────────────────────────────────────────
+        if tickets:
+            story.append(h2("Diagnóstico Técnico"))
+            story.append(body(
+                f"{len(tickets)} incidencias detectadas en la auditoría, ordenadas por prioridad.",
+                textColor=colors.HexColor(cls._GRAY), spaceAfter=6,
+            ))
+            for t in tickets:
+                prio = getattr(t.prioridad, "value", t.prioridad)
+                cat = getattr(t.categoria, "value", t.categoria)
+                color = cls._PRIO_COLOR.get(prio, cls._GRAY)
+                story.append(body(
+                    f'<font color="{color}"><b>[{esc(prio)}]</b></font> {esc(t.titulo)} '
+                    f'<font color="{cls._GRAY}">({esc(cat)} · {t.estimacion} min)</font><br/>'
+                    f'<font color="{cls._GRAY}">{esc(t.impacto)}</font>',
+                    spaceAfter=5,
+                ))
+            story.append(Spacer(1, 10))
+
+        # ── 3. Plan de marketing base (9 módulos) ────────────────────────────────
+        if marketing is not None:
+            plan = marketing.plan
+            story.append(PageBreak())
+            story.append(h2("Plan de Marketing"))
+            plan_dict = plan.model_dump()
+            for key, title in MarketingPlanPDF._SECTION_TITLES:
+                story.append(Paragraph(
+                    esc(title),
+                    style("h3", fontSize=11.5, textColor=colors.HexColor(cls._BLUE), spaceBefore=4, spaceAfter=4),
+                ))
+                for line in MarketingPlanPDF._render_section(key, plan_dict[key]):
+                    story.append(body(line))
+                story.append(Spacer(1, 8))
+
+        # ── 4. Módulos M10 ejecutados ─────────────────────────────────────────────
+        def _has(record, attr: str) -> bool:
+            return (
+                record is not None
+                and getattr(getattr(record, "status", None), "value", getattr(record, "status", None)) == "DONE"
+                and bool(getattr(record, attr, None))
+            )
+
+        executed: List[Any] = []
+
+        # M3 — Contenido
+        if _has(content, "pieces"):
+            executed.append(h2("Contenido (Módulo 3) — piezas listas para publicar"))
+            for p in content.pieces:
+                executed.append(body(
+                    f'<b>Día {esc(p.dia)} · {esc(p.formato)}</b> — {esc(p.objetivo)}',
+                    spaceAfter=2,
+                ))
+                executed.append(body(esc(p.texto_completo)))
+                executed.append(body(
+                    f'<font color="{cls._GRAY}"><i>Prompt imagen:</i> {esc(p.prompt_imagen)}</font>'
+                ))
+                executed.append(body(
+                    f'<font color="{cls._GRAY}">{esc(" ".join(p.hashtags))} · Mejor horario: {esc(p.mejor_horario)}</font>',
+                    spaceAfter=7,
+                ))
+
+        # M5 — WhatsApp
+        if _has(whatsapp, "mensajes"):
+            executed.append(h2("Mensajes de WhatsApp (Módulo 5)"))
+            for m in whatsapp.mensajes:
+                executed.append(body(f"<b>{esc(m.categoria)}</b>", spaceAfter=2))
+                executed.append(body(esc(m.mensaje_texto)))
+                extra = []
+                if m.variables_sugeridas:
+                    extra.append(f"Variables: {esc(', '.join(m.variables_sugeridas))}")
+                if m.mejor_momento_envio:
+                    extra.append(f"Cuándo enviar: {esc(m.mejor_momento_envio)}")
+                if extra:
+                    executed.append(body(
+                        f'<font color="{cls._GRAY}">{" · ".join(extra)}</font>', spaceAfter=7,
+                    ))
+
+        # M6 — Plan 90 días (tickets)
+        if _has(plan90, "tickets"):
+            executed.append(h2("Plan de Ejecución 90 días (Módulo 6)"))
+            executed.extend(cls._render_tickets(plan90.tickets, body, colors))
+
+        # M7 — IA y automatización
+        if _has(ia, "items"):
+            executed.append(h2("IA y Automatización (Módulo 7)"))
+            for it in ia.items:
+                prio = getattr(it.prioridad, "value", it.prioridad)
+                color = cls._PRIO_COLOR.get(prio, cls._GRAY)
+                executed.append(body(
+                    f'<font color="{color}"><b>[{esc(prio)}]</b></font> <b>{esc(it.herramienta)}</b> '
+                    f'<font color="{cls._GRAY}">({esc(it.costo)} · {it.estimacion} min)</font>',
+                    spaceAfter=2,
+                ))
+                executed.append(body(esc(it.caso_uso)))
+                for paso in it.pasos:
+                    executed.append(body(f"&nbsp;&nbsp;• {esc(paso)}"))
+                if it.mejor_momento:
+                    executed.append(body(
+                        f'<font color="{cls._GRAY}"><i>Mejor momento:</i> {esc(it.mejor_momento)}</font>',
+                        spaceAfter=7,
+                    ))
+
+        # M8 — Métricas clave
+        if _has(metricas, "items"):
+            executed.append(h2("Métricas Clave (Módulo 8)"))
+            for mt in metricas.items:
+                executed.append(body(f"<b>{esc(mt.nombre)}</b>", spaceAfter=2))
+                executed.append(body(f"<i>Fórmula:</i> {esc(mt.formula)}"))
+                executed.append(body(
+                    f'<font color="{cls._GRAY}">Benchmark: {esc(mt.benchmark)} · '
+                    f'Objetivo: {esc(mt.objetivo)} · Revisión: {esc(mt.frecuencia_revision)}</font>'
+                ))
+                if mt.donde_medir:
+                    executed.append(body(
+                        f'<font color="{cls._GRAY}">Dónde medir: {esc(", ".join(mt.donde_medir))}</font>'
+                    ))
+                if mt.mejor_momento:
+                    executed.append(body(
+                        f'<font color="{cls._GRAY}"><i>Mejor momento:</i> {esc(mt.mejor_momento)}</font>',
+                        spaceAfter=7,
+                    ))
+
+        # M9 — Top 10 acciones (tickets)
+        if _has(actions, "tickets"):
+            executed.append(h2("Top 10 Acciones Inmediatas (Módulo 9)"))
+            executed.extend(cls._render_tickets(actions.tickets, body, colors))
+
+        if executed:
+            story.append(PageBreak())
+            story.append(Paragraph(
+                "<b>Módulos de Marketing Ejecutados</b>",
+                style("hsec", fontSize=15, textColor=colors.HexColor(cls._BLUE), spaceAfter=8),
+            ))
+            story.extend(executed)
+
+        # ── 5. Footer ─────────────────────────────────────────────────────────────
+        story.append(Spacer(1, 12))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor(cls._GRAY)))
+        story.append(Paragraph(
+            "Generado por WPRecover 2.0 — Reporte Integral de Proyecto",
+            style("footer", fontSize=8, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER),
+        ))
+
+        doc.build(story)
+        return buf.getvalue()
+
+    @classmethod
+    def _render_tickets(cls, tickets: List[Any], body, colors) -> List[Any]:
+        esc = cls._esc
+        out: List[Any] = []
+        for t in tickets:
+            prio = getattr(t.prioridad, "value", t.prioridad)
+            color = cls._PRIO_COLOR.get(prio, cls._GRAY)
+            out.append(body(
+                f'<font color="{color}"><b>[{esc(prio)}]</b></font> {esc(t.titulo)} '
+                f'<font color="{cls._GRAY}">({t.estimacion} min)</font>',
+                spaceAfter=4,
+            ))
+        return out
+
+
+# ---------------------------------------------------------------------------
 # ReportStore
 # ---------------------------------------------------------------------------
 

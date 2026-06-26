@@ -66,7 +66,7 @@ from marketing_engine import (
 )
 from project_engine import ProjectStore, resolve_api_key
 from qa_engine import BaselineCapture, EvidenceLogger, QARecord, QAReport, QAValidator
-from report_engine import GuaranteeEvaluator, ReportStore, build_full_report
+from report_engine import FullProjectReport, GuaranteeEvaluator, ReportStore, build_full_report
 from ticket_engine import generate_tickets
 from wp_agent_client import WPAgentClient
 
@@ -954,6 +954,73 @@ async def close_project(project_id: str):
     record.updated_at = datetime.now(timezone.utc).isoformat()
     ProjectStore.save(record)
     return ProjectPublic.from_record(record)
+
+
+@app.get("/projects/{project_id}/full-report", tags=["M9 Projects"])
+def get_project_full_report(project_id: str):
+    """
+    Generate, on-demand, ONE downloadable PDF aggregating everything that
+    already exists for the project — no data is created or persisted:
+
+      1. Portada (cliente, URL, Recovery Score antes/después, fecha)
+      2. Diagnóstico técnico (tickets derivados de checks_before)
+      3. Plan de marketing base (9 módulos) — si existe un plan para el proyecto
+      4. Módulos M10 ejecutados, solo los que tengan datos (status DONE):
+         Contenido (M3), WhatsApp (M5), Plan 90 días (M6),
+         IA/Automatización (M7), Métricas (M8), Top 10 acciones (M9)
+      5. Pie de página WPRecover
+
+    Cada bloque se omite si no hay datos. Devuelve application/pdf como adjunto.
+    """
+    record = ProjectStore.get(project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
+
+    # Diagnóstico técnico: no hay store de tickets de auditoría por proyecto;
+    # se regeneran desde el baseline persistido (checks_before).
+    tickets = []
+    if record.checks_before:
+        tickets = generate_tickets(AuditInput(
+            checks=record.checks_before,
+            errores=[],
+            recovery_score=record.score_before or 0.0,
+            url=record.site_url,
+        ))
+
+    # Puente project_id -> plan_id: el plan de marketing y sus módulos M10 se
+    # guardan por plan_id. Tomamos el plan más reciente del proyecto.
+    marketing = content = whatsapp = plan90 = ia = metricas = actions = None
+    plans = MarketingPlanStore.list_all(project_id)
+    if plans:
+        plan_id = plans[0]["id"]
+        marketing = MarketingPlanStore.load(plan_id)
+        content = ContentPieceStore.load(plan_id)
+        whatsapp = WhatsAppMessageStore.load(plan_id)
+        plan90 = Plan90DiasTicketsStore.load(plan_id)
+        ia = IaAutomatizacionStore.load(plan_id)
+        metricas = MetricasClaveStore.load(plan_id)
+        actions = MarketingActionTicketsStore.load(plan_id)
+
+    try:
+        pdf_bytes = FullProjectReport.generate(
+            project=record,
+            tickets=tickets,
+            marketing=marketing,
+            content=content,
+            whatsapp=whatsapp,
+            plan90=plan90,
+            ia=ia,
+            metricas=metricas,
+            actions=actions,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Full report generation failed: {e}")
+
+    return Response(content=pdf_bytes, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="full-report-{project_id}.pdf"',
+    })
 
 
 @app.delete("/projects/{project_id}", tags=["M9 Projects"])
