@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, X, RefreshCw, FolderKanban, ExternalLink, Wand2,
   CheckCircle2, Circle, XCircle, Download, ClipboardCheck, Lock, Trash2,
-  Copy, Check, KeyRound, Eye,
+  Copy, Check, KeyRound, Eye, FileText,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -505,6 +505,8 @@ function ProjectDetailModal({
   const [error, setError] = useState<string | null>(null)
   const [revealedKey, setRevealedKey] = useState<string | null>(null)
   const [revealingKey, setRevealingKey] = useState(false)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
 
   const revealKey = async () => {
     setRevealingKey(true)
@@ -559,6 +561,45 @@ function ProjectDetailModal({
 
   const downloadPdf = () => {
     window.open(`${API_BASE}/report/download/${project.id}`, '_blank')
+  }
+
+  const downloadFullReport = async () => {
+    setReportLoading(true)
+    setReportError(null)
+    try {
+      // Reuse the already-revealed key if available; otherwise fetch it on demand.
+      let apiKey = revealedKey
+      if (!apiKey) {
+        const data = await api.getProjectApiKey(project.id)
+        apiKey = data.wprepro_api_key
+      }
+      const res = await fetch(`${API_BASE}/projects/${project.id}/full-report`, {
+        headers: { 'X-API-Key': apiKey },
+      })
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const body = await res.json()
+          detail = body.detail ?? detail
+        } catch {
+          // PDF/binary or non-JSON error body — keep the status code.
+        }
+        throw new Error(detail)
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `reporte-${project.id}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e: unknown) {
+      setReportError(e instanceof Error ? e.message : 'Error al generar el reporte')
+    } finally {
+      setReportLoading(false)
+    }
   }
 
   return (
@@ -625,6 +666,25 @@ function ProjectDetailModal({
         )}
 
         {error && <p className="text-xs text-danger">{error}</p>}
+
+        {/* Reporte completo (agrega todo lo que exista del proyecto) */}
+        <div className="space-y-2">
+          <button
+            className="btn-ghost border border-border w-full flex items-center justify-center gap-2 disabled:opacity-60"
+            onClick={downloadFullReport}
+            disabled={reportLoading}
+          >
+            {reportLoading
+              ? <><RefreshCw className="w-4 h-4 animate-spin" /> Generando reporte…</>
+              : <><FileText className="w-4 h-4" /> Descargar reporte completo PDF</>}
+          </button>
+          {reportLoading && (
+            <p className="text-xs text-muted text-center">
+              Esto puede tardar ~20-30s en la primera petición (cold start).
+            </p>
+          )}
+          {reportError && <p className="text-xs text-danger text-center">{reportError}</p>}
+        </div>
 
         {/* Status-specific action */}
         <div className="flex justify-end gap-2 pt-2 border-t border-border">
