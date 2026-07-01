@@ -255,6 +255,16 @@ class BeforeAfterReport:
     _GRAY = "#6B7280"
     _LIGHT = "#F3F4F6"
 
+    # Colour per Recovery Score category — usada como bullet cuadrado de color
+    # delante del nombre de cada categoría en la tabla de scores.
+    _CAT_COLOR: Dict[str, str] = {
+        "SEO": "#2563EB",          # azul
+        "Performance": "#10B981",  # verde
+        "Conversion": "#F97316",   # naranja
+        "Seguridad": "#EF4444",    # rojo
+        "WooCommerce": "#8B5CF6",  # morado
+    }
+
     @staticmethod
     def _esc(text: Any) -> str:
         """Escapa los caracteres especiales de XML para que el mini-parser de
@@ -323,12 +333,12 @@ class BeforeAfterReport:
         )
         story.append(Paragraph(
             "<b>WPRecover</b>",
-            style("h1", fontSize=26, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER, leading=32),
+            style("h1", fontSize=34, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER, leading=40),
         ))
         story.append(Spacer(1, 4))
         story.append(Paragraph(
             header_subtitle,
-            style("sub", fontSize=13, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
+            style("sub", fontSize=14, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
         ))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor(cls._BLUE), spaceAfter=10))
 
@@ -411,11 +421,21 @@ class BeforeAfterReport:
             "<b>Desglose por Categoría</b>",
             style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceAfter=6),
         ))
+        # Nombre de categoría con bullet cuadrado de color según _CAT_COLOR.
+        cat_cell_style = style("catcell", fontSize=11, leading=13)
+
+        def cat_cell(cat: str) -> Paragraph:
+            color = cls._CAT_COLOR.get(cat, cls._GRAY)
+            return Paragraph(
+                f'<font color="{color}">■</font> <b>{cls._esc(cat)}</b>',
+                cat_cell_style,
+            )
+
         if is_diagnostico:
             cat_data = [["Categoría", "Peso", "Score actual"]]
             for cat, weight in WEIGHTS.items():
                 sb = per_cat_before.get(cat, 0.0)
-                cat_data.append([cat, f"{int(weight * 100)}%", f"{sb:.0f} / 100"])
+                cat_data.append([cat_cell(cat), f"{int(weight * 100)}%", f"{sb:.0f} / 100"])
             cat_table = Table(cat_data, colWidths=[7 * cm, 3 * cm, 6 * cm])
         else:
             cat_data = [["Categoría", "Peso", "Antes", "Después", "Delta"]]
@@ -423,7 +443,7 @@ class BeforeAfterReport:
                 sb = per_cat_before.get(cat, 0.0)
                 sa = per_cat_after.get(cat, 0.0)
                 d = sa - sb
-                cat_data.append([cat, f"{int(weight * 100)}%", f"{sb:.0f}", f"{sa:.0f}",
+                cat_data.append([cat_cell(cat), f"{int(weight * 100)}%", f"{sb:.0f}", f"{sa:.0f}",
                                   f"+{d:.0f}" if d >= 0 else f"{d:.0f}"])
             cat_table = Table(cat_data, colWidths=[5.5 * cm, 2 * cm, 2.5 * cm, 2.5 * cm, 3.5 * cm])
 
@@ -490,6 +510,11 @@ class BeforeAfterReport:
         story.append(Paragraph(
             "Generado por WPRecover 2.0 — Motor de Reportes M5",
             style("footer", fontSize=8, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER),
+        ))
+        story.append(Paragraph(
+            f"Documento confidencial — {cls._esc(req.client_name)} — {datetime.now().strftime('%d/%m/%Y')}",
+            style("confidential", fontSize=8, textColor=colors.HexColor(cls._GRAY),
+                  alignment=TA_CENTER, spaceBefore=2),
         ))
 
         doc.build(story)
