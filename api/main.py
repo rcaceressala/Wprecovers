@@ -10,7 +10,7 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -21,6 +21,7 @@ from models import (
     AuditInput,
     BatchRunRequest,
     CheckoutRequest,
+    EstadoAprobacion,
     FixApplyRequest,
     MarketingGenerateRequest,
     Prioridad,
@@ -55,8 +56,13 @@ from marketing_engine import (
     MarketingPlanStore,
     MetricasClaveStore,
     Plan90DiasTicketsStore,
+    Plan90TicketNotFound,
+    Plan90TicketTransitionError,
     WhatsAppMessageStore,
+    approve_plan90_ticket,
     generate_marketing_plan,
+    list_plan90_tickets,
+    reject_plan90_ticket,
     start_actions_job,
     start_content_job,
     start_iaautomatizacion_job,
@@ -1150,6 +1156,77 @@ def get_marketing_plan90(plan_id: str):
     if not record:
         raise HTTPException(status_code=404, detail=f"No plan90 job found for plan '{plan_id}'")
     return record
+
+
+# --- Módulo 6: flujo de aprobación manual de tickets del Plan 90 días --------
+# La ejecución real de un ticket aprobado es un paso SEPARADO y POSTERIOR (otra
+# sesión). Aquí solo: generar (pendiente_revision), listar, aprobar y rechazar.
+
+class TicketRejectRequest(BaseModel):
+    motivo: Optional[str] = None
+
+
+@app.post("/marketing/{plan_id}/generate-tickets", status_code=202, tags=["M10 Marketing OS"])
+async def marketing_generate_tickets(plan_id: str):
+    """
+    Genera los 36 tickets del Plan de Ejecución 90 días a partir de un plan ya
+    generado. Todos nacen con estado_aprobacion 'pendiente_revision':
+    ninguno se aprueba ni ejecuta automáticamente.
+
+    Reutiliza el mismo job async+polling que execute-plan90 (esta ruta es su
+    alias con la nomenclatura del flujo de aprobación). Responde de inmediato
+    (status RUNNING) — consultar con GET /marketing/{plan_id}/tickets.
+    Idempotente por plan_id: si ya se generaron, los devuelve sin duplicar.
+    """
+    try:
+        record = await start_plan90_job(plan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return record
+
+
+@app.get("/marketing/{plan_id}/tickets", tags=["M10 Marketing OS"])
+def get_marketing_tickets(
+    plan_id: str,
+    estado: Optional[EstadoAprobacion] = Query(
+        None, description="Filtra por estado_aprobacion"
+    ),
+    semana: Optional[int] = Query(
+        None, ge=1, le=12, description="Filtra por semana (1-12)"
+    ),
+):
+    """Lista los tickets del Plan 90 días, con filtro opcional por estado de
+    aprobación y/o semana."""
+    try:
+        return list_plan90_tickets(plan_id, estado=estado, semana=semana)
+    except Plan90TicketNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.patch("/marketing/{plan_id}/tickets/{ticket_id}/approve", tags=["M10 Marketing OS"])
+def approve_marketing_ticket(plan_id: str, ticket_id: str):
+    """Aprueba un ticket: pendiente_revision -> aprobado. Acción manual y
+    explícita — es el único punto del sistema que aprueba un ticket."""
+    try:
+        return approve_plan90_ticket(plan_id, ticket_id)
+    except Plan90TicketNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Plan90TicketTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.patch("/marketing/{plan_id}/tickets/{ticket_id}/reject", tags=["M10 Marketing OS"])
+def reject_marketing_ticket(
+    plan_id: str, ticket_id: str, body: Optional[TicketRejectRequest] = None
+):
+    """Rechaza un ticket: pendiente_revision -> rechazado, con motivo opcional."""
+    motivo = body.motivo if body else None
+    try:
+        return reject_plan90_ticket(plan_id, ticket_id, motivo=motivo)
+    except Plan90TicketNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Plan90TicketTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.post("/marketing/{plan_id}/execute-whatsapp", status_code=202, tags=["M10 Marketing OS"])
