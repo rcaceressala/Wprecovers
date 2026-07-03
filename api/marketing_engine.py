@@ -903,9 +903,13 @@ def list_plan90_tickets(
     return record.model_copy(update={"tickets": tickets})
 
 
-def approve_plan90_ticket(plan_id: str, ticket_id: str) -> Plan90Ticket:
+def approve_plan90_ticket(
+    plan_id: str, ticket_id: str, actor: Optional[str] = None
+) -> Plan90Ticket:
     """Transición pendiente_revision -> aprobado. Acción HUMANA explícita:
-    es el único punto del código que pone un ticket en 'aprobado'."""
+    es el único punto del código que pone un ticket en 'aprobado'. `actor` es la
+    identidad (auto-declarada) del operador, tomada del header X-Actor en la capa
+    HTTP; queda registrada en el ticket para trazabilidad."""
     record = _load_plan90_record_or_raise(plan_id)
     ticket = _find_plan90_ticket(record, ticket_id)
     if ticket.estado_aprobacion != EstadoAprobacion.pendiente_revision:
@@ -915,14 +919,17 @@ def approve_plan90_ticket(plan_id: str, ticket_id: str) -> Plan90Ticket:
         )
     ticket.estado_aprobacion = EstadoAprobacion.aprobado
     ticket.motivo_rechazo = None
+    ticket.aprobado_por = actor
     Plan90DiasTicketsStore.save(record)
     return ticket
 
 
 def reject_plan90_ticket(
-    plan_id: str, ticket_id: str, motivo: Optional[str] = None
+    plan_id: str, ticket_id: str, motivo: Optional[str] = None, actor: Optional[str] = None
 ) -> Plan90Ticket:
-    """Transición pendiente_revision -> rechazado, con motivo opcional."""
+    """Transición pendiente_revision -> rechazado, con motivo opcional. `actor`
+    es la identidad (auto-declarada) del operador que rechaza, registrada para
+    trazabilidad (ver approve_plan90_ticket)."""
     record = _load_plan90_record_or_raise(plan_id)
     ticket = _find_plan90_ticket(record, ticket_id)
     if ticket.estado_aprobacion != EstadoAprobacion.pendiente_revision:
@@ -932,6 +939,7 @@ def reject_plan90_ticket(
         )
     ticket.estado_aprobacion = EstadoAprobacion.rechazado
     ticket.motivo_rechazo = motivo
+    ticket.rechazado_por = actor
     Plan90DiasTicketsStore.save(record)
     return ticket
 

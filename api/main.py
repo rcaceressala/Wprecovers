@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # Trigger Render redeploy
 import os
+import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -1166,6 +1167,43 @@ class TicketRejectRequest(BaseModel):
     motivo: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Auth de operador para las transiciones manuales del Plan 90 días (Módulo 6).
+#
+# Mecanismo: API key estática compartida (header X-Admin-Key) comparada en
+# tiempo constante contra WPREPRO_ADMIN_KEY. La key autentica ("¿tienes permiso
+# para operar?") pero no identifica; la identidad la aporta el header X-Actor
+# (email/nombre del operador) y es AUTO-DECLARADA — con una key compartida no se
+# puede verificar quién la usa, solo dejar constancia de quién dice ser.
+#
+# Fail-closed: si WPREPRO_ADMIN_KEY no está configurada en el servidor, la
+# acción queda deshabilitada (503) en vez de quedar abierta.
+# ---------------------------------------------------------------------------
+def require_admin(
+    x_admin_key: Optional[str] = Header(
+        None, alias="X-Admin-Key", description="Clave de administrador para aprobar/rechazar tickets"
+    ),
+    x_actor: Optional[str] = Header(
+        None, alias="X-Actor", description="Identidad (email/nombre) del operador que ejecuta la acción"
+    ),
+) -> str:
+    expected = os.getenv("WPREPRO_ADMIN_KEY", "")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Aprobación deshabilitada: WPREPRO_ADMIN_KEY no está configurada en el servidor.",
+        )
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected):
+        raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente.")
+    actor = (x_actor or "").strip()
+    if not actor:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el header X-Actor (identidad del operador que aprueba/rechaza).",
+        )
+    return actor
+
+
 @app.post("/marketing/{plan_id}/generate-tickets", status_code=202, tags=["M10 Marketing OS"])
 async def marketing_generate_tickets(plan_id: str):
     """
@@ -1204,11 +1242,14 @@ def get_marketing_tickets(
 
 
 @app.patch("/marketing/{plan_id}/tickets/{ticket_id}/approve", tags=["M10 Marketing OS"])
-def approve_marketing_ticket(plan_id: str, ticket_id: str):
+def approve_marketing_ticket(
+    plan_id: str, ticket_id: str, actor: str = Depends(require_admin)
+):
     """Aprueba un ticket: pendiente_revision -> aprobado. Acción manual y
-    explícita — es el único punto del sistema que aprueba un ticket."""
+    explícita — es el único punto del sistema que aprueba un ticket. Requiere
+    X-Admin-Key válida y X-Actor (identidad del operador, ver require_admin)."""
     try:
-        return approve_plan90_ticket(plan_id, ticket_id)
+        return approve_plan90_ticket(plan_id, ticket_id, actor=actor)
     except Plan90TicketNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Plan90TicketTransitionError as e:
@@ -1217,12 +1258,16 @@ def approve_marketing_ticket(plan_id: str, ticket_id: str):
 
 @app.patch("/marketing/{plan_id}/tickets/{ticket_id}/reject", tags=["M10 Marketing OS"])
 def reject_marketing_ticket(
-    plan_id: str, ticket_id: str, body: Optional[TicketRejectRequest] = None
+    plan_id: str,
+    ticket_id: str,
+    body: Optional[TicketRejectRequest] = None,
+    actor: str = Depends(require_admin),
 ):
-    """Rechaza un ticket: pendiente_revision -> rechazado, con motivo opcional."""
+    """Rechaza un ticket: pendiente_revision -> rechazado, con motivo opcional.
+    Requiere X-Admin-Key válida y X-Actor (ver require_admin)."""
     motivo = body.motivo if body else None
     try:
-        return reject_plan90_ticket(plan_id, ticket_id, motivo=motivo)
+        return reject_plan90_ticket(plan_id, ticket_id, motivo=motivo, actor=actor)
     except Plan90TicketNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Plan90TicketTransitionError as e:

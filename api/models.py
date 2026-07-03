@@ -549,6 +549,11 @@ class Plan90Ticket(Ticket):
     )
     estado_aprobacion: EstadoAprobacion = EstadoAprobacion.pendiente_revision
     motivo_rechazo: Optional[str] = None
+    # Identidad (auto-declarada) del operador que ejecutó la transición, tomada
+    # del header X-Actor bajo la key de admin. None en registros previos a la
+    # capa de auth y en las transiciones hechas por código sin actor explícito.
+    aprobado_por: Optional[str] = None
+    rechazado_por: Optional[str] = None
 
 
 class Plan90DiasTicketsRecord(BaseModel):
