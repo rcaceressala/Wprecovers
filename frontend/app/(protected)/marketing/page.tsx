@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   Megaphone, Sparkles, RefreshCw, AlertTriangle, Download,
-  ChevronDown, ChevronRight, Inbox, Wand2, Copy, Check,
+  ChevronDown, ChevronRight, Inbox, Wand2, Copy, Check, X,
 } from 'lucide-react'
 import {
   api,
@@ -11,6 +11,7 @@ import {
   type MonthlyBudget, type WprecoverPlan, type ProjectSummary,
   type ContentPiece, type Ticket, type Prioridad, type WhatsAppMessage,
   type IaAutomatizacionItem, type MetricaItem,
+  type Plan90Ticket, type EstadoAprobacion,
 } from '@/lib/api'
 
 const BUDGET_LABELS: Record<MonthlyBudget, string> = {
@@ -171,6 +172,140 @@ function ActionTicketRow({ ticket }: { ticket: Ticket }) {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 90 días ticket row — con aprobación/rechazo manual (Módulo 6)
+// ---------------------------------------------------------------------------
+const APROB_META: Record<EstadoAprobacion, { label: string; cls: string }> = {
+  pendiente_revision: { label: 'Pendiente de revisión', cls: 'text-amber-400 bg-amber-500/10 border-amber-500/30' },
+  aprobado: { label: 'Aprobado', cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' },
+  rechazado: { label: 'Rechazado', cls: 'text-danger bg-danger/10 border-danger/30' },
+  en_ejecucion: { label: 'En ejecución', cls: 'text-sky-400 bg-sky-500/10 border-sky-500/30' },
+  completado: { label: 'Completado', cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' },
+}
+
+function Plan90TicketRow({
+  ticket, planId, onUpdated,
+}: { ticket: Plan90Ticket; planId: string; onUpdated: (t: Plan90Ticket) => void }) {
+  const [busy, setBusy] = useState<null | 'approve' | 'reject'>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showReject, setShowReject] = useState(false)
+  const [motivo, setMotivo] = useState('')
+
+  const meta = APROB_META[ticket.estado_aprobacion]
+  const isPending = ticket.estado_aprobacion === 'pendiente_revision'
+
+  const handleApprove = async () => {
+    setBusy('approve'); setError(null)
+    try {
+      onUpdated(await api.approveMarketingTicket(planId, ticket.id))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'No se pudo aprobar el ticket')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleReject = async () => {
+    setBusy('reject'); setError(null)
+    try {
+      const updated = await api.rejectMarketingTicket(planId, ticket.id, motivo.trim() || null)
+      onUpdated(updated)
+      setShowReject(false); setMotivo('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'No se pudo rechazar el ticket')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="bg-surface border border-border rounded-lg p-3 space-y-2">
+      <div className="flex items-start gap-3">
+        <span className={`${PRIO_CLS[ticket.prioridad]} flex-shrink-0`}>{ticket.prioridad}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-dim">{ticket.titulo}</p>
+          <p className="text-[10px] text-muted font-mono mt-1">
+            {ticket.id} · Semana {ticket.semana} · {ticket.estimacion}m est.
+          </p>
+        </div>
+        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border flex-shrink-0 ${meta.cls}`}>
+          {meta.label}
+        </span>
+      </div>
+
+      {ticket.estado_aprobacion === 'aprobado' && ticket.aprobado_por && (
+        <p className="text-[10px] text-muted font-mono pl-1">Aprobado por {ticket.aprobado_por}</p>
+      )}
+      {ticket.estado_aprobacion === 'rechazado' && (
+        <p className="text-[10px] text-muted font-mono pl-1">
+          Rechazado{ticket.rechazado_por ? ` por ${ticket.rechazado_por}` : ''}
+          {ticket.motivo_rechazo ? ` · ${ticket.motivo_rechazo}` : ''}
+        </p>
+      )}
+
+      {isPending && !showReject && (
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            className="btn-primary text-xs flex items-center gap-1.5 px-3 py-1.5"
+            onClick={handleApprove}
+            disabled={busy !== null}
+          >
+            {busy === 'approve'
+              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              : <Check className="w-3.5 h-3.5" />} Aprobar
+          </button>
+          <button
+            className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border
+                       text-dim hover:bg-s2 transition-colors"
+            onClick={() => { setShowReject(true); setError(null) }}
+            disabled={busy !== null}
+          >
+            <X className="w-3.5 h-3.5" /> Rechazar
+          </button>
+        </div>
+      )}
+
+      {isPending && showReject && (
+        <div className="space-y-2 pt-1">
+          <input
+            type="text"
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Motivo del rechazo (opcional)"
+            className="w-full bg-s2 border border-border rounded-lg px-3 py-1.5 text-sm
+                       text-dim placeholder:text-muted focus:outline-none focus:border-danger/50"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg
+                         bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 transition-colors"
+              onClick={handleReject}
+              disabled={busy !== null}
+            >
+              {busy === 'reject'
+                ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                : <X className="w-3.5 h-3.5" />} Confirmar rechazo
+            </button>
+            <button
+              className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted hover:bg-s2 transition-colors"
+              onClick={() => { setShowReject(false); setMotivo(''); setError(null) }}
+              disabled={busy !== null}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <p className="text-[11px] text-danger flex items-center gap-1.5 pl-1">
+          <AlertTriangle className="w-3 h-3" /> {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // IA automation card — created by execute-iaautomatizacion (Módulo 7)
 // ---------------------------------------------------------------------------
 function IaAutomatizacionRow({ item }: { item: IaAutomatizacionItem }) {
@@ -245,9 +380,31 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
   const [executingWhatsapp, setExecutingWhatsapp] = useState(false)
   const [whatsappError, setWhatsappError] = useState<string | null>(null)
 
-  const [plan90Tickets, setPlan90Tickets] = useState<Ticket[] | null>(null)
+  const [plan90Tickets, setPlan90Tickets] = useState<Plan90Ticket[] | null>(null)
   const [creatingPlan90, setCreatingPlan90] = useState(false)
   const [plan90Error, setPlan90Error] = useState<string | null>(null)
+
+  // Carga los tickets del Plan 90 ya generados (sesiones anteriores) para que sus
+  // estados de aprobación y los botones aprobar/rechazar aparezcan al abrir el
+  // plan, no solo tras crearlos en esta sesión. Si no hay job aún, se ignora el
+  // error y se muestra el plan en prosa.
+  useEffect(() => {
+    let cancelled = false
+    api.getMarketingPlan90(planId)
+      .then((record) => {
+        if (!cancelled && record.status === 'DONE' && record.tickets.length > 0) {
+          setPlan90Tickets(record.tickets)
+        }
+      })
+      .catch(() => { /* tickets aún no generados */ })
+    return () => { cancelled = true }
+  }, [planId])
+
+  const handlePlan90TicketUpdated = (updated: Plan90Ticket) => {
+    setPlan90Tickets((prev) =>
+      prev ? prev.map((t) => (t.id === updated.id ? updated : t)) : prev,
+    )
+  }
 
   const [iaItems, setIaItems] = useState<IaAutomatizacionItem[] | null>(null)
   const [creatingIa, setCreatingIa] = useState(false)
@@ -502,7 +659,14 @@ function PlanSections({ plan, planId }: { plan: MarketingPlanRecord['plan']; pla
       <Section title="6. Plan de Ejecución (90 días)">
         <div className="space-y-4">
           {plan90Tickets
-            ? plan90Tickets.map((t) => <ActionTicketRow key={t.id} ticket={t} />)
+            ? plan90Tickets.map((t) => (
+                <Plan90TicketRow
+                  key={t.id}
+                  ticket={t}
+                  planId={planId}
+                  onUpdated={handlePlan90TicketUpdated}
+                />
+              ))
             : ([
                 ['Semana 1-2', plan.plan_ejecucion_90_dias.semana_1_2],
                 ['Semana 3-4', plan.plan_ejecucion_90_dias.semana_3_4],
