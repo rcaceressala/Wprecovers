@@ -57,10 +57,14 @@ from marketing_engine import (
     MarketingPlanStore,
     MetricasClaveStore,
     Plan90DiasTicketsStore,
+    Plan90ExecutionConfigError,
+    Plan90ExecutionError,
+    Plan90TicketNotExecutable,
     Plan90TicketNotFound,
     Plan90TicketTransitionError,
     WhatsAppMessageStore,
     approve_plan90_ticket,
+    execute_plan90_ticket,
     generate_marketing_plan,
     list_plan90_tickets,
     reject_plan90_ticket,
@@ -1272,6 +1276,31 @@ def reject_marketing_ticket(
         raise HTTPException(status_code=404, detail=str(e))
     except Plan90TicketTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.patch("/marketing/{plan_id}/tickets/{ticket_id}/execute", tags=["M10 Marketing OS"])
+def execute_marketing_ticket(
+    plan_id: str, ticket_id: str, actor: str = Depends(require_admin)
+):
+    """Ejecuta manualmente un ticket APROBADO del subset técnico contra el sitio
+    WordPress del cliente (vía WPRepro Agent). Disparo humano explícito — no es
+    automático al aprobar. Requiere X-Admin-Key + X-Actor (ver require_admin).
+
+    409 si no está en 'aprobado'; 422 si el ticket no es ejecutable vía WP; 400 si
+    no se puede resolver sitio/key del proyecto (nunca cae a la key global); 502 si
+    el WPRepro Agent falla (el ticket vuelve a 'aprobado' para reintentar)."""
+    try:
+        return execute_plan90_ticket(plan_id, ticket_id, actor=actor)
+    except Plan90TicketNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Plan90TicketTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Plan90TicketNotExecutable as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Plan90ExecutionConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Plan90ExecutionError as e:
+        raise HTTPException(status_code=502, detail=f"Error ejecutando el ticket: {e}")
 
 
 @app.post("/marketing/{plan_id}/execute-whatsapp", status_code=202, tags=["M10 Marketing OS"])

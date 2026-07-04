@@ -554,6 +554,12 @@ class Plan90Ticket(Ticket):
     # capa de auth y en las transiciones hechas por código sin actor explícito.
     aprobado_por: Optional[str] = None
     rechazado_por: Optional[str] = None
+    # Ejecución real contra WordPress (M6 Sesión 3). Se pueblan al pasar por
+    # /execute; error_ejecucion queda seteado si el intento falló (el ticket
+    # vuelve a 'aprobado' para poder reintentarse).
+    ejecutado_por: Optional[str] = None
+    ejecutado_at: Optional[str] = None
+    error_ejecucion: Optional[str] = None
 
 
 class Plan90DiasTicketsRecord(BaseModel):
@@ -562,6 +568,18 @@ class Plan90DiasTicketsRecord(BaseModel):
     created_at: str
     status: ContentJobStatus = ContentJobStatus.DONE
     error: Optional[str] = None
+
+
+class Plan90ExecutionLogEntry(BaseModel):
+    """Registro append-only de cada intento de ejecución de un ticket del Plan 90
+    contra WordPress (auditoría — espejo de FixLogEntry). `outcome` es uno de
+    'started' | 'completed' | 'failed'."""
+    plan_id: str
+    ticket_id: str
+    actor: str
+    timestamp: str
+    outcome: str
+    detail: Optional[str] = None
 
 
 class IaAutomatizacionItem(BaseModel):

@@ -204,6 +204,18 @@ def init_db() -> None:
                 )
             """)
 
+            # marketing_engine.py — Plan90ExecutionLog (append-only: cada intento de
+            # ejecución de un ticket del Plan 90 contra WordPress, para auditoría)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS plan90_execution_log (
+                    id SERIAL PRIMARY KEY,
+                    ticket_id TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS plan90_execution_log_ticket_idx ON plan90_execution_log (ticket_id)")
+
             # marketing_engine.py — IaAutomatizacionStore (Módulo 7 ejecutado: fichas IA por plan)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ia_automatizacion (

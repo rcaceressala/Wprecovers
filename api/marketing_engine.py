@@ -27,6 +27,7 @@ from models import (
     MetricasClaveRecord,
     Plan90Dias,
     Plan90DiasTicketsRecord,
+    Plan90ExecutionLogEntry,
     Plan90Ticket,
     Prioridad,
     Ticket,
@@ -34,6 +35,8 @@ from models import (
     WhatsAppMessagesRecord,
 )
 from audit_engine import run_full_audit
+from project_engine import ProjectStore
+from wp_agent_client import WPAgentClient
 
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
 CONTENT_DIR = Path(__file__).parent / "content_pieces"
@@ -868,6 +871,28 @@ class Plan90TicketTransitionError(Exception):
     """Transición de estado_aprobacion no permitida por el flujo."""
 
 
+class Plan90TicketNotExecutable(Exception):
+    """El ticket no pertenece al subset ejecutable vía WordPress (modulo_origen)."""
+
+
+class Plan90ExecutionConfigError(Exception):
+    """No se puede determinar contra qué sitio/con qué key ejecutar el ticket:
+    falta project_id, el proyecto no existe, o no tiene site_url/wprepro_api_key.
+    Fallo explícito — nunca se cae al WPREPRO_API_KEY global (ese fallback causó
+    los 403 en clientes reales)."""
+
+
+class Plan90ExecutionError(Exception):
+    """El WPRepro Agent rechazó o falló la acción. El ticket vuelve a 'aprobado'
+    con error_ejecucion registrado para poder reintentarse."""
+
+
+# Único módulo cuyas acciones son ejecutables vía WordPress hoy: las técnicas que
+# _derive_modulo_origen clasifica como diagnóstico (ssl/headers/pagespeed/...).
+# El resto son acciones de marketing sin representación en el WPRepro Agent.
+EXECUTABLE_MODULO = "Módulo 1: Diagnóstico inicial"
+
+
 def _load_plan90_record_or_raise(plan_id: str) -> Plan90DiasTicketsRecord:
     record = Plan90DiasTicketsStore.load(plan_id)
     if not record:
@@ -941,6 +966,151 @@ def reject_plan90_ticket(
     ticket.motivo_rechazo = motivo
     ticket.rechazado_por = actor
     Plan90DiasTicketsStore.save(record)
+    return ticket
+
+
+# ---------------------------------------------------------------------------
+# Ejecución real de tickets aprobados (M6 Sesión 3)
+#
+# SCOPE: solo el subset EXECUTABLE_MODULO se ejecuta vía WordPress. La acción
+# concreta que se corre es todavía un STUB verificable (wp plugin list, read-only):
+# esta sesión construye la máquina de estados + auth + resolución de key por
+# proyecto + auditoría; el mapeo real título->WP-CLI/snippet es de la Sesión 4.
+# ---------------------------------------------------------------------------
+
+# Acción placeholder read-only. WP-CLI dentro de la whitelist del plugin; no muta
+# el sitio. Se reemplaza por el mapeo real por ticket en la Sesión 4.
+_STUB_EXECUTE_COMMANDS = ["wp plugin list"]
+
+
+class Plan90ExecutionLog:
+    """Log append-only (espejo de fix_engine.FixLog) de cada intento de ejecución."""
+
+    @staticmethod
+    def _path(ticket_id: str) -> Path:
+        _dir = Path(__file__).parent / "plan90_execution_log"
+        _dir.mkdir(parents=True, exist_ok=True)
+        return _dir / f"{ticket_id}.jsonl"
+
+    @classmethod
+    def append(cls, entry: Plan90ExecutionLogEntry) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO plan90_execution_log (ticket_id, data) VALUES (%s, %s)",
+                    (entry.ticket_id, Json(json.loads(entry.model_dump_json()))),
+                )
+            return
+        with cls._path(entry.ticket_id).open("a", encoding="utf-8") as fh:
+            fh.write(entry.model_dump_json() + "\n")
+
+    @classmethod
+    def read(cls, ticket_id: str) -> List[Plan90ExecutionLogEntry]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data FROM plan90_execution_log WHERE ticket_id = %s ORDER BY id ASC",
+                    (ticket_id,),
+                )
+                rows = cur.fetchall()
+            return [Plan90ExecutionLogEntry(**r[0]) for r in rows]
+        path = cls._path(ticket_id)
+        if not path.exists():
+            return []
+        return [
+            Plan90ExecutionLogEntry(**json.loads(line))
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+
+def _log_execution(plan_id: str, ticket_id: str, actor: str, outcome: str, detail: Optional[str] = None) -> None:
+    Plan90ExecutionLog.append(
+        Plan90ExecutionLogEntry(
+            plan_id=plan_id,
+            ticket_id=ticket_id,
+            actor=actor,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            outcome=outcome,
+            detail=detail,
+        )
+    )
+
+
+def _resolve_project_target(ticket: Plan90Ticket) -> Tuple[str, str]:
+    """Devuelve (site_url, wprepro_api_key) del proyecto del ticket, o lanza
+    Plan90ExecutionConfigError. NO usa resolve_api_key(): nunca cae al global."""
+    if not ticket.project_id:
+        raise Plan90ExecutionConfigError(
+            f"El ticket '{ticket.id}' no tiene project_id — no se puede saber contra "
+            f"qué sitio ejecutar. Regenera los tickets desde un plan con project_id."
+        )
+    project = ProjectStore.get(ticket.project_id)
+    if not project:
+        raise Plan90ExecutionConfigError(
+            f"No existe el proyecto '{ticket.project_id}' del ticket '{ticket.id}'."
+        )
+    if not project.site_url:
+        raise Plan90ExecutionConfigError(
+            f"El proyecto '{ticket.project_id}' no tiene site_url configurado."
+        )
+    if not project.wprepro_api_key:
+        raise Plan90ExecutionConfigError(
+            f"El proyecto '{ticket.project_id}' no tiene wprepro_api_key propia. "
+            f"Configúrala en el proyecto (no se usa la key global)."
+        )
+    return project.site_url, project.wprepro_api_key
+
+
+def execute_plan90_ticket(plan_id: str, ticket_id: str, actor: str) -> Plan90Ticket:
+    """Ejecuta un ticket APROBADO del subset técnico contra su sitio WordPress.
+
+    Flujo de estados: aprobado -> en_ejecucion (persistido) -> completado (OK) /
+    de vuelta a aprobado con error_ejecucion (falla). Cada intento queda en el
+    log de auditoría. La key se resuelve por proyecto, sin fallback al global.
+    """
+    record = _load_plan90_record_or_raise(plan_id)
+    ticket = _find_plan90_ticket(record, ticket_id)
+
+    if ticket.estado_aprobacion != EstadoAprobacion.aprobado:
+        raise Plan90TicketTransitionError(
+            f"Solo se puede ejecutar un ticket en 'aprobado'; "
+            f"'{ticket_id}' está en '{ticket.estado_aprobacion.value}'."
+        )
+    if ticket.modulo_origen != EXECUTABLE_MODULO:
+        raise Plan90TicketNotExecutable(
+            f"El ticket '{ticket_id}' ({ticket.modulo_origen}) no es ejecutable vía "
+            f"WordPress. Solo '{EXECUTABLE_MODULO}' lo es."
+        )
+
+    # Resuelve el objetivo ANTES de mover el estado: si no hay sitio/key, el ticket
+    # se queda en 'aprobado' y no se registra un intento fallido espurio.
+    site_url, api_key = _resolve_project_target(ticket)
+
+    # Persistir en_ejecucion antes de la llamada (visible para polling/otros lectores).
+    ticket.estado_aprobacion = EstadoAprobacion.en_ejecucion
+    ticket.ejecutado_por = actor
+    ticket.ejecutado_at = datetime.now(timezone.utc).isoformat()
+    ticket.error_ejecucion = None
+    Plan90DiasTicketsStore.save(record)
+    _log_execution(plan_id, ticket_id, actor, "started", detail=" ".join(_STUB_EXECUTE_COMMANDS))
+
+    try:
+        client = WPAgentClient(site_url, api_key)
+        result = client.execute(_STUB_EXECUTE_COMMANDS)  # STUB: acción real en Sesión 4
+    except Exception as exc:
+        ticket.estado_aprobacion = EstadoAprobacion.aprobado
+        ticket.error_ejecucion = str(exc)
+        Plan90DiasTicketsStore.save(record)
+        _log_execution(plan_id, ticket_id, actor, "failed", detail=str(exc))
+        raise Plan90ExecutionError(str(exc)) from exc
+
+    ticket.estado_aprobacion = EstadoAprobacion.completado
+    ticket.error_ejecucion = None
+    Plan90DiasTicketsStore.save(record)
+    _log_execution(plan_id, ticket_id, actor, "completed", detail=json.dumps(result)[:500])
     return ticket
 
 
