@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # Trigger Render redeploy
 import os
+import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -956,8 +957,49 @@ async def close_project(project_id: str):
     return ProjectPublic.from_record(record)
 
 
+# ---------------------------------------------------------------------------
+# Auth de operador (hotfix de seguridad).
+#
+# Mecanismo: API key estática compartida (header X-Admin-Key) comparada en
+# tiempo constante contra WPREPRO_ADMIN_KEY. La key autentica ("¿tienes permiso
+# para operar?") pero no identifica; la identidad la aporta el header X-Actor
+# (email/nombre del operador) y es AUTO-DECLARADA — con una key compartida no se
+# puede verificar quién la usa, solo dejar constancia de quién dice ser.
+#
+# Fail-closed: si WPREPRO_ADMIN_KEY no está configurada en el servidor, la
+# acción queda deshabilitada (503) en vez de quedar abierta.
+#
+# NOTA: idéntica a la require_admin de M6 (feat/full-project-report, 856fa7c).
+# Se define aquí porque esa rama aún no está en main; al mergear ambas quedan
+# iguales y se puede consolidar en un único módulo de auth.
+# ---------------------------------------------------------------------------
+def require_admin(
+    x_admin_key: Optional[str] = Header(
+        None, alias="X-Admin-Key", description="Clave de administrador para operar"
+    ),
+    x_actor: Optional[str] = Header(
+        None, alias="X-Actor", description="Identidad (email/nombre) del operador que ejecuta la acción"
+    ),
+) -> str:
+    expected = os.getenv("WPREPRO_ADMIN_KEY", "")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Acción deshabilitada: WPREPRO_ADMIN_KEY no está configurada en el servidor.",
+        )
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected):
+        raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente.")
+    actor = (x_actor or "").strip()
+    if not actor:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el header X-Actor (identidad del operador).",
+        )
+    return actor
+
+
 @app.get("/projects/{project_id}/full-report", tags=["M9 Projects"])
-def get_project_full_report(project_id: str):
+def get_project_full_report(project_id: str, _actor: str = Depends(require_admin)):
     """
     Generate, on-demand, ONE downloadable PDF aggregating everything that
     already exists for the project — no data is created or persisted:
