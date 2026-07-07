@@ -210,11 +210,36 @@ def _sec_checks(html: str, url: str, resp_headers: dict) -> Dict[str, bool]:
 # WooCommerce checks (5)
 # ---------------------------------------------------------------------------
 
-def _woo_checks(html: str) -> Dict[str, bool]:
-    is_woo = bool(re.search(
-        r'woocommerce|class=["\'][^"\']*\bwc-|wc_add_to_cart|add_to_cart_url',
-        html, re.I
-    ))
+_WC_BODY_CLASS_RE = re.compile(r'<body[^>]*\bclass=["\'][^"\']*\bwoocommerce\b', re.I)
+_WC_TEMPLATE_MARKERS_RE = re.compile(
+    r'class=["\'][^"\']*\btype-product\b'   # real CPT "product" post class
+    r'|name=["\']add-to-cart["\']'           # real WooCommerce add-to-cart form field
+    r'|\[add_to_cart\b',                      # unrendered shortcode literal
+    re.I,
+)
+
+
+async def _detect_wc_rest_api(base_url: str) -> bool:
+    """True if /wp-json/wc/store or /wp-json/wc/v3 is registered (status != 404)."""
+    parts = urlsplit(base_url)
+    root = f"{parts.scheme}://{parts.netloc}"
+    for path in ("/wp-json/wc/store", "/wp-json/wc/v3"):
+        try:
+            async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as c:
+                r = await c.get(root + path, headers={"User-Agent": UA})
+                if r.status_code != 404:
+                    return True
+        except httpx.HTTPError:
+            continue
+    return False
+
+
+async def _woo_checks(html: str, url: str) -> Dict[str, bool]:
+    body_class_hit = bool(_WC_BODY_CLASS_RE.search(html))
+    template_hit   = bool(_WC_TEMPLATE_MARKERS_RE.search(html))
+    rest_api_hit   = await _detect_wc_rest_api(url)
+
+    is_woo = sum([body_class_hit, template_hit, rest_api_hit]) >= 2
 
     if not is_woo:
         return {k: True for k in
@@ -298,7 +323,8 @@ async def run_full_audit(url: str) -> TicketResponse:
         "Conversion":  _conv_checks(_html) if html_available else {k: True for k in
                        ["tel_clickeable","whatsapp","formularios","CTA","tracking"]},
         "Seguridad":   _sec_checks(_html, _ssl_url, resp_headers),
-        "WooCommerce": _woo_checks(_html),
+        "WooCommerce": (await _woo_checks(_html, url)) if html_available else {k: True for k in
+                       ["productos_sin_cat", "productos_sin_img", "slugs_dup", "precios", "pasarelas"]},
     }
 
     errores: list[str] = []

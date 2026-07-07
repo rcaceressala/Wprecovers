@@ -255,6 +255,16 @@ class BeforeAfterReport:
     _GRAY = "#6B7280"
     _LIGHT = "#F3F4F6"
 
+    # Colour per Recovery Score category — usada como bullet cuadrado de color
+    # delante del nombre de cada categoría en la tabla de scores.
+    _CAT_COLOR: Dict[str, str] = {
+        "SEO": "#2563EB",          # azul
+        "Performance": "#10B981",  # verde
+        "Conversion": "#F97316",   # naranja
+        "Seguridad": "#EF4444",    # rojo
+        "WooCommerce": "#8B5CF6",  # morado
+    }
+
     @staticmethod
     def _esc(text: Any) -> str:
         """Escapa los caracteres especiales de XML para que el mini-parser de
@@ -323,12 +333,12 @@ class BeforeAfterReport:
         )
         story.append(Paragraph(
             "<b>WPRecover</b>",
-            style("h1", fontSize=26, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER, leading=32),
+            style("h1", fontSize=34, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER, leading=40),
         ))
         story.append(Spacer(1, 4))
         story.append(Paragraph(
             header_subtitle,
-            style("sub", fontSize=13, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
+            style("sub", fontSize=14, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
         ))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor(cls._BLUE), spaceAfter=10))
 
@@ -411,11 +421,21 @@ class BeforeAfterReport:
             "<b>Desglose por Categoría</b>",
             style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceAfter=6),
         ))
+        # Nombre de categoría con bullet cuadrado de color según _CAT_COLOR.
+        cat_cell_style = style("catcell", fontSize=11, leading=13)
+
+        def cat_cell(cat: str) -> Paragraph:
+            color = cls._CAT_COLOR.get(cat, cls._GRAY)
+            return Paragraph(
+                f'<font color="{color}">■</font> <b>{cls._esc(cat)}</b>',
+                cat_cell_style,
+            )
+
         if is_diagnostico:
             cat_data = [["Categoría", "Peso", "Score actual"]]
             for cat, weight in WEIGHTS.items():
                 sb = per_cat_before.get(cat, 0.0)
-                cat_data.append([cat, f"{int(weight * 100)}%", f"{sb:.0f} / 100"])
+                cat_data.append([cat_cell(cat), f"{int(weight * 100)}%", f"{sb:.0f} / 100"])
             cat_table = Table(cat_data, colWidths=[7 * cm, 3 * cm, 6 * cm])
         else:
             cat_data = [["Categoría", "Peso", "Antes", "Después", "Delta"]]
@@ -423,7 +443,7 @@ class BeforeAfterReport:
                 sb = per_cat_before.get(cat, 0.0)
                 sa = per_cat_after.get(cat, 0.0)
                 d = sa - sb
-                cat_data.append([cat, f"{int(weight * 100)}%", f"{sb:.0f}", f"{sa:.0f}",
+                cat_data.append([cat_cell(cat), f"{int(weight * 100)}%", f"{sb:.0f}", f"{sa:.0f}",
                                   f"+{d:.0f}" if d >= 0 else f"{d:.0f}"])
             cat_table = Table(cat_data, colWidths=[5.5 * cm, 2 * cm, 2.5 * cm, 2.5 * cm, 3.5 * cm])
 
@@ -491,6 +511,11 @@ class BeforeAfterReport:
             "Generado por WPRecover 2.0 — Motor de Reportes M5",
             style("footer", fontSize=8, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER),
         ))
+        story.append(Paragraph(
+            f"Documento confidencial — {cls._esc(req.client_name)} — {datetime.now().strftime('%d/%m/%Y')}",
+            style("confidential", fontSize=8, textColor=colors.HexColor(cls._GRAY),
+                  alignment=TA_CENTER, spaceBefore=2),
+        ))
 
         doc.build(story)
         return pdf_path
@@ -534,6 +559,93 @@ class FullProjectReport:
         "Baja": _GRAY,
     }
 
+    # Hoja de estilos del PDF (CSS paged-media para WeasyPrint).
+    # - @page :first pinta el degradado a sangre completa (portada full-bleed) y
+    #   suprime el footer en la portada (margin 0 → sin caja @bottom-center).
+    # - el resto de páginas lleva el footer "Generado por WPRecover · wprecover.cl".
+    _CSS = """
+        @page {
+            size: A4;
+            margin: 2cm;
+            @bottom-center {
+                content: "Generado por WPRecover · wprecover.cl";
+                font-size: 8pt;
+                color: #6B7280;
+            }
+        }
+        @page :first {
+            margin: 0;
+            background: linear-gradient(135deg, #0A2540 0%, #1E3A5F 100%);
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: "Helvetica Neue", Arial, "DejaVu Sans", sans-serif;
+            font-size: 9.5pt;
+            line-height: 1.4;
+            color: #1F2937;
+            margin: 0;
+        }
+        .cover {
+            color: #FFFFFF;
+            padding: 4cm 2.5cm 0;
+            page-break-after: always;
+        }
+        .cover .brand { font-size: 30pt; font-weight: 700; letter-spacing: .5px; }
+        .cover-sub { font-size: 13pt; color: #9DB8D6; margin-top: 4px; }
+        .client-name { font-size: 38pt; font-weight: 800; margin: 2.4cm 0 .3cm; line-height: 1.05; }
+        .cover-meta { font-size: 12pt; color: #C6D6EA; margin: 2px 0; }
+        .score-grid { margin-top: 2.2cm; }
+        .score-grid > div {
+            display: inline-block;
+            background: rgba(255,255,255,.10);
+            border: 1px solid rgba(255,255,255,.25);
+            border-radius: 10px;
+            padding: 14px 22px;
+            margin-right: 14px;
+            text-align: center;
+        }
+        .score-label {
+            display: block; font-size: 9pt; color: #9DB8D6;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        .score-val { display: block; font-size: 26pt; font-weight: 700; }
+        .score-single { margin-top: 2.2cm; }
+        .score-val-big { display: block; font-size: 54pt; font-weight: 800; }
+        .cover-foot { margin-top: 3cm; font-size: 9pt; color: #9DB8D6; }
+        .section-header {
+            background: #1D6FA4;
+            color: #FFFFFF;
+            font-size: 13pt;
+            font-weight: 700;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 18px 0 10px;
+        }
+        .section-header .secnum {
+            display: inline-block;
+            width: 22px; height: 22px;
+            line-height: 22px;
+            text-align: center;
+            background: rgba(255,255,255,.22);
+            border-radius: 50%;
+            margin-right: 10px;
+            font-size: 11pt;
+        }
+        .subhead { color: #1D6FA4; font-size: 11.5pt; margin: 14px 0 6px; }
+        .line { margin: 0 0 3px; }
+        .muted { color: #6B7280; }
+        p.muted { margin: 0 0 6px; }
+        .ticket {
+            border-left: 4px solid #6B7280;
+            background: #F8FAFC;
+            padding: 6px 10px;
+            margin: 0 0 6px;
+            border-radius: 0 4px 4px 0;
+        }
+        .prio { font-weight: 700; }
+        .page-break { page-break-before: always; }
+    """
+
     @classmethod
     def generate(
         cls,
@@ -548,155 +660,95 @@ class FullProjectReport:
         actions: Optional[Any] = None,
     ) -> bytes:
         try:
-            from reportlab.lib import colors
-            from reportlab.lib.enums import TA_CENTER
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-            from reportlab.lib.units import cm
-            from reportlab.platypus import (
-                HRFlowable,
-                PageBreak,
-                Paragraph,
-                SimpleDocTemplate,
-                Spacer,
-                Table,
-                TableStyle,
-            )
+            from weasyprint import HTML
         except ImportError as exc:
-            raise RuntimeError("reportlab not installed. Run: pip install reportlab") from exc
+            raise RuntimeError("weasyprint not installed. Run: pip install weasyprint") from exc
 
         # _render_section / _SECTION_TITLES reusados del PDF de marketing. Import
         # diferido: marketing_engine no importa report_engine, así que no hay ciclo,
         # pero lo dejamos local para no acoplar el import de este módulo.
         from marketing_engine import MarketingPlanPDF
 
-        import io
-
         esc = cls._esc
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buf, pagesize=A4,
-            rightMargin=2 * cm, leftMargin=2 * cm,
-            topMargin=2 * cm, bottomMargin=2 * cm,
-        )
-        styles = getSampleStyleSheet()
+        parts: List[str] = []   # fragmentos HTML del cuerpo (post-portada)
+        sec = 0                 # contador de secciones mayores
 
-        def style(name: str, **kw) -> ParagraphStyle:
-            return ParagraphStyle(name, parent=styles["Normal"], **kw)
-
-        def h2(text: str):
-            return Paragraph(
-                f"<b>{esc(text)}</b>",
-                style("h2", fontSize=13, textColor=colors.HexColor(cls._BLUE), spaceBefore=4, spaceAfter=6),
+        def section_header(title: str) -> str:
+            nonlocal sec
+            sec += 1
+            return (
+                f'<div class="section-header">'
+                f'<span class="secnum">{sec}</span>{esc(title)}</div>'
             )
 
-        def body(text: str, **kw):
-            kw.setdefault("fontSize", 9.5)
-            kw.setdefault("leading", 13)
-            kw.setdefault("spaceAfter", 3)
-            return Paragraph(text, style("body", **kw))
-
-        story: List[Any] = []
-
         # ── 1. Portada ─────────────────────────────────────────────────────────
-        story.append(Paragraph(
-            "<b>WPRecover</b>",
-            style("h1", fontSize=26, textColor=colors.HexColor(cls._BLUE), alignment=TA_CENTER, leading=32),
-        ))
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(
-            "Reporte Integral de Proyecto",
-            style("sub", fontSize=13, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER, spaceAfter=4),
-        ))
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor(cls._BLUE), spaceAfter=10))
-
-        info = [
-            ["Cliente:", esc(project.client_name), "Plan:", esc(project.plan)],
-            ["Sitio:", esc(project.site_url), "Estado:", esc(getattr(project.status, "value", project.status))],
-            ["Fecha:", datetime.now().strftime("%d/%m/%Y"), "Proyecto:", esc(project.id)],
-        ]
-        info_table = Table(info, colWidths=[3 * cm, 6.5 * cm, 2.5 * cm, 4.5 * cm])
-        info_table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ]))
-        story.append(info_table)
-        story.append(Spacer(1, 12))
-
         sb = project.score_before
         sa = project.score_after
         if sb is not None and sa is not None:
             delta = round(sa - sb, 1)
             delta_str = f"+{delta:.1f}" if delta >= 0 else f"{delta:.1f}"
-            score_data = [
-                ["Recovery Score", "Antes", "Después", "Mejora"],
-                ["Score General", f"{sb:.1f}", f"{sa:.1f}", delta_str],
-            ]
-            score_table = Table(score_data, colWidths=[6 * cm, 3.5 * cm, 3.5 * cm, 3.5 * cm])
-            score_col = colors.HexColor(cls._GREEN if delta >= 0 else cls._RED)
+            score_block = (
+                '<div class="score-grid">'
+                f'<div><span class="score-label">Antes</span>'
+                f'<span class="score-val">{sb:.1f}</span></div>'
+                f'<div><span class="score-label">Después</span>'
+                f'<span class="score-val">{sa:.1f}</span></div>'
+                f'<div><span class="score-label">Mejora</span>'
+                f'<span class="score-val">{delta_str}</span></div>'
+                '</div>'
+            )
         else:
             score_now = sb if sb is not None else (sa if sa is not None else 0.0)
-            score_data = [
-                ["Recovery Score", "Resultado"],
-                ["Score General", f"{score_now:.1f} / 100"],
-            ]
-            score_table = Table(score_data, colWidths=[8 * cm, 8 * cm])
-            score_col = colors.HexColor(cls._BLUE)
+            score_block = (
+                '<div class="score-single">'
+                f'<span class="score-val-big">{score_now:.1f}</span>'
+                '<span class="score-label">Recovery Score / 100</span></div>'
+            )
 
-        score_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(cls._BLUE)),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 11),
-            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor(cls._LIGHT)),
-            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-            ("FONTSIZE", (0, 1), (-1, -1), 13),
-            ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
-            ("TEXTCOLOR", (-1, 1), (-1, -1), score_col),
-            ("FONTNAME", (-1, 1), (-1, -1), "Helvetica-Bold"),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.white),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.append(score_table)
-        story.append(Spacer(1, 14))
+        estado = esc(getattr(project.status, "value", project.status))
+        cover = (
+            '<section class="cover">'
+            '<div class="brand">WPRecover</div>'
+            '<div class="cover-sub">Reporte Integral de Proyecto</div>'
+            f'<div class="client-name">{esc(project.client_name)}</div>'
+            f'<div class="cover-meta">{esc(project.site_url)}</div>'
+            f'<div class="cover-meta">Plan {esc(project.plan)} · {estado} · '
+            f'{datetime.now().strftime("%d/%m/%Y")}</div>'
+            f'{score_block}'
+            f'<div class="cover-foot">Proyecto {esc(project.id)}</div>'
+            '</section>'
+        )
 
         # ── 2. Diagnóstico técnico ───────────────────────────────────────────────
         if tickets:
-            story.append(h2("Diagnóstico Técnico"))
-            story.append(body(
-                f"{len(tickets)} incidencias detectadas en la auditoría, ordenadas por prioridad.",
-                textColor=colors.HexColor(cls._GRAY), spaceAfter=6,
-            ))
+            parts.append(section_header("Diagnóstico Técnico"))
+            parts.append(
+                f'<p class="muted">{len(tickets)} incidencias detectadas en la '
+                'auditoría, ordenadas por prioridad.</p>'
+            )
             for t in tickets:
                 prio = getattr(t.prioridad, "value", t.prioridad)
                 cat = getattr(t.categoria, "value", t.categoria)
                 color = cls._PRIO_COLOR.get(prio, cls._GRAY)
-                story.append(body(
-                    f'<font color="{color}"><b>[{esc(prio)}]</b></font> {esc(t.titulo)} '
-                    f'<font color="{cls._GRAY}">({esc(cat)} · {t.estimacion} min)</font><br/>'
-                    f'<font color="{cls._GRAY}">{esc(t.impacto)}</font>',
-                    spaceAfter=5,
-                ))
-            story.append(Spacer(1, 10))
+                parts.append(
+                    f'<div class="ticket" style="border-left-color:{color}">'
+                    f'<span class="prio" style="color:{color}">[{esc(prio)}]</span> '
+                    f'<b>{esc(t.titulo)}</b> '
+                    f'<span class="muted">({esc(cat)} · {t.estimacion} min)</span><br>'
+                    f'<span class="muted">{esc(t.impacto)}</span></div>'
+                )
 
         # ── 3. Plan de marketing base (9 módulos) ────────────────────────────────
         if marketing is not None:
             plan = marketing.plan
-            story.append(PageBreak())
-            story.append(h2("Plan de Marketing"))
+            parts.append('<div class="page-break"></div>')
+            parts.append(section_header("Plan de Marketing"))
             plan_dict = plan.model_dump()
             for key, title in MarketingPlanPDF._SECTION_TITLES:
-                story.append(Paragraph(
-                    esc(title),
-                    style("h3", fontSize=11.5, textColor=colors.HexColor(cls._BLUE), spaceBefore=4, spaceAfter=4),
-                ))
+                parts.append(f'<h3 class="subhead">{esc(title)}</h3>')
+                # Las líneas ya traen markup válido (<b>, <i>, &nbsp;, •) — NO re-escapar.
                 for line in MarketingPlanPDF._render_section(key, plan_dict[key]):
-                    story.append(body(line))
-                story.append(Spacer(1, 8))
+                    parts.append(f'<div class="line">{line}</div>')
 
         # ── 4. Módulos M10 ejecutados ─────────────────────────────────────────────
         def _has(record, attr: str) -> bool:
@@ -706,122 +758,112 @@ class FullProjectReport:
                 and bool(getattr(record, attr, None))
             )
 
-        executed: List[Any] = []
+        executed: List[str] = []
 
         # M3 — Contenido
         if _has(content, "pieces"):
-            executed.append(h2("Contenido (Módulo 3) — piezas listas para publicar"))
+            executed.append('<h3 class="subhead">Contenido (Módulo 3) — piezas listas para publicar</h3>')
             for p in content.pieces:
-                executed.append(body(
-                    f'<b>Día {esc(p.dia)} · {esc(p.formato)}</b> — {esc(p.objetivo)}',
-                    spaceAfter=2,
-                ))
-                executed.append(body(esc(p.texto_completo)))
-                executed.append(body(
-                    f'<font color="{cls._GRAY}"><i>Prompt imagen:</i> {esc(p.prompt_imagen)}</font>'
-                ))
-                executed.append(body(
-                    f'<font color="{cls._GRAY}">{esc(" ".join(p.hashtags))} · Mejor horario: {esc(p.mejor_horario)}</font>',
-                    spaceAfter=7,
-                ))
+                executed.append(
+                    f'<div class="line"><b>Día {esc(p.dia)} · {esc(p.formato)}</b> — {esc(p.objetivo)}</div>'
+                )
+                executed.append(f'<div class="line">{esc(p.texto_completo)}</div>')
+                executed.append(
+                    f'<div class="line muted"><i>Prompt imagen:</i> {esc(p.prompt_imagen)}</div>'
+                )
+                executed.append(
+                    f'<div class="line muted">{esc(" ".join(p.hashtags))} · '
+                    f'Mejor horario: {esc(p.mejor_horario)}</div>'
+                )
 
         # M5 — WhatsApp
         if _has(whatsapp, "mensajes"):
-            executed.append(h2("Mensajes de WhatsApp (Módulo 5)"))
+            executed.append('<h3 class="subhead">Mensajes de WhatsApp (Módulo 5)</h3>')
             for m in whatsapp.mensajes:
-                executed.append(body(f"<b>{esc(m.categoria)}</b>", spaceAfter=2))
-                executed.append(body(esc(m.mensaje_texto)))
+                executed.append(f'<div class="line"><b>{esc(m.categoria)}</b></div>')
+                executed.append(f'<div class="line">{esc(m.mensaje_texto)}</div>')
                 extra = []
                 if m.variables_sugeridas:
                     extra.append(f"Variables: {esc(', '.join(m.variables_sugeridas))}")
                 if m.mejor_momento_envio:
                     extra.append(f"Cuándo enviar: {esc(m.mejor_momento_envio)}")
                 if extra:
-                    executed.append(body(
-                        f'<font color="{cls._GRAY}">{" · ".join(extra)}</font>', spaceAfter=7,
-                    ))
+                    executed.append(f'<div class="line muted">{" · ".join(extra)}</div>')
 
         # M6 — Plan 90 días (tickets)
         if _has(plan90, "tickets"):
-            executed.append(h2("Plan de Ejecución 90 días (Módulo 6)"))
-            executed.extend(cls._render_tickets(plan90.tickets, body, colors))
+            executed.append('<h3 class="subhead">Plan de Ejecución 90 días (Módulo 6)</h3>')
+            executed.extend(cls._render_tickets(plan90.tickets))
 
         # M7 — IA y automatización
         if _has(ia, "items"):
-            executed.append(h2("IA y Automatización (Módulo 7)"))
+            executed.append('<h3 class="subhead">IA y Automatización (Módulo 7)</h3>')
             for it in ia.items:
                 prio = getattr(it.prioridad, "value", it.prioridad)
                 color = cls._PRIO_COLOR.get(prio, cls._GRAY)
-                executed.append(body(
-                    f'<font color="{color}"><b>[{esc(prio)}]</b></font> <b>{esc(it.herramienta)}</b> '
-                    f'<font color="{cls._GRAY}">({esc(it.costo)} · {it.estimacion} min)</font>',
-                    spaceAfter=2,
-                ))
-                executed.append(body(esc(it.caso_uso)))
+                executed.append(
+                    f'<div class="line"><span class="prio" style="color:{color}">[{esc(prio)}]</span> '
+                    f'<b>{esc(it.herramienta)}</b> '
+                    f'<span class="muted">({esc(it.costo)} · {it.estimacion} min)</span></div>'
+                )
+                executed.append(f'<div class="line">{esc(it.caso_uso)}</div>')
                 for paso in it.pasos:
-                    executed.append(body(f"&nbsp;&nbsp;• {esc(paso)}"))
+                    executed.append(f'<div class="line">&nbsp;&nbsp;• {esc(paso)}</div>')
                 if it.mejor_momento:
-                    executed.append(body(
-                        f'<font color="{cls._GRAY}"><i>Mejor momento:</i> {esc(it.mejor_momento)}</font>',
-                        spaceAfter=7,
-                    ))
+                    executed.append(
+                        f'<div class="line muted"><i>Mejor momento:</i> {esc(it.mejor_momento)}</div>'
+                    )
 
         # M8 — Métricas clave
         if _has(metricas, "items"):
-            executed.append(h2("Métricas Clave (Módulo 8)"))
+            executed.append('<h3 class="subhead">Métricas Clave (Módulo 8)</h3>')
             for mt in metricas.items:
-                executed.append(body(f"<b>{esc(mt.nombre)}</b>", spaceAfter=2))
-                executed.append(body(f"<i>Fórmula:</i> {esc(mt.formula)}"))
-                executed.append(body(
-                    f'<font color="{cls._GRAY}">Benchmark: {esc(mt.benchmark)} · '
-                    f'Objetivo: {esc(mt.objetivo)} · Revisión: {esc(mt.frecuencia_revision)}</font>'
-                ))
+                executed.append(f'<div class="line"><b>{esc(mt.nombre)}</b></div>')
+                executed.append(f'<div class="line"><i>Fórmula:</i> {esc(mt.formula)}</div>')
+                executed.append(
+                    f'<div class="line muted">Benchmark: {esc(mt.benchmark)} · '
+                    f'Objetivo: {esc(mt.objetivo)} · Revisión: {esc(mt.frecuencia_revision)}</div>'
+                )
                 if mt.donde_medir:
-                    executed.append(body(
-                        f'<font color="{cls._GRAY}">Dónde medir: {esc(", ".join(mt.donde_medir))}</font>'
-                    ))
+                    executed.append(
+                        f'<div class="line muted">Dónde medir: {esc(", ".join(mt.donde_medir))}</div>'
+                    )
                 if mt.mejor_momento:
-                    executed.append(body(
-                        f'<font color="{cls._GRAY}"><i>Mejor momento:</i> {esc(mt.mejor_momento)}</font>',
-                        spaceAfter=7,
-                    ))
+                    executed.append(
+                        f'<div class="line muted"><i>Mejor momento:</i> {esc(mt.mejor_momento)}</div>'
+                    )
 
         # M9 — Top 10 acciones (tickets)
         if _has(actions, "tickets"):
-            executed.append(h2("Top 10 Acciones Inmediatas (Módulo 9)"))
-            executed.extend(cls._render_tickets(actions.tickets, body, colors))
+            executed.append('<h3 class="subhead">Top 10 Acciones Inmediatas (Módulo 9)</h3>')
+            executed.extend(cls._render_tickets(actions.tickets))
 
         if executed:
-            story.append(PageBreak())
-            story.append(Paragraph(
-                "<b>Módulos de Marketing Ejecutados</b>",
-                style("hsec", fontSize=15, textColor=colors.HexColor(cls._BLUE), spaceAfter=8),
-            ))
-            story.extend(executed)
+            parts.append('<div class="page-break"></div>')
+            parts.append(section_header("Módulos de Marketing Ejecutados"))
+            parts.extend(executed)
 
-        # ── 5. Footer ─────────────────────────────────────────────────────────────
-        story.append(Spacer(1, 12))
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor(cls._GRAY)))
-        story.append(Paragraph(
-            "Generado por WPRecover 2.0 — Reporte Integral de Proyecto",
-            style("footer", fontSize=8, textColor=colors.HexColor(cls._GRAY), alignment=TA_CENTER),
-        ))
-
-        doc.build(story)
-        return buf.getvalue()
+        html_str = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<style>{cls._CSS}</style></head><body>"
+            f"{cover}{''.join(parts)}"
+            "</body></html>"
+        )
+        return HTML(string=html_str).write_pdf()
 
     @classmethod
-    def _render_tickets(cls, tickets: List[Any], body, colors) -> List[Any]:
+    def _render_tickets(cls, tickets: List[Any]) -> List[str]:
         esc = cls._esc
-        out: List[Any] = []
+        out: List[str] = []
         for t in tickets:
             prio = getattr(t.prioridad, "value", t.prioridad)
             color = cls._PRIO_COLOR.get(prio, cls._GRAY)
-            out.append(body(
-                f'<font color="{color}"><b>[{esc(prio)}]</b></font> {esc(t.titulo)} '
-                f'<font color="{cls._GRAY}">({t.estimacion} min)</font>',
-                spaceAfter=4,
-            ))
+            out.append(
+                f'<div class="ticket" style="border-left-color:{color}">'
+                f'<span class="prio" style="color:{color}">[{esc(prio)}]</span> '
+                f'{esc(t.titulo)} '
+                f'<span class="muted">({t.estimacion} min)</span></div>'
+            )
         return out
 
 

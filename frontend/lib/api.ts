@@ -316,9 +316,25 @@ export interface MarketingActionTicketsRecord {
   error?: string | null
 }
 
+export type EstadoAprobacion =
+  | 'pendiente_revision'
+  | 'aprobado'
+  | 'rechazado'
+  | 'en_ejecucion'
+  | 'completado'
+
+export interface Plan90Ticket extends Ticket {
+  semana: number
+  modulo_origen: string
+  estado_aprobacion: EstadoAprobacion
+  motivo_rechazo: string | null
+  aprobado_por: string | null
+  rechazado_por: string | null
+}
+
 export interface Plan90DiasTicketsRecord {
   plan_id: string
-  tickets: Ticket[]
+  tickets: Plan90Ticket[]
   created_at: string
   status: ContentJobStatus
   error?: string | null
@@ -390,6 +406,22 @@ export interface MetricasClaveRecord {
 
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...opts?.headers },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
+// Same-origin fetch para las rutas API de Next (no antepone BASE). Se usa en las
+// acciones que pasan por un proxy server-side de Next para no exponer secretos
+// (X-Admin-Key) en el navegador — ver app/api/marketing/.../route.ts. La cookie
+// de sesión (wpr_token) viaja automáticamente por ser same-origin.
+async function localFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
     ...opts,
     headers: { 'Content-Type': 'application/json', ...opts?.headers },
   })
@@ -574,6 +606,18 @@ export const api = {
     apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/execute-plan90`, { method: 'POST' }),
   getMarketingPlan90: (planId: string) =>
     apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/plan90`),
+  // Aprobar/rechazar pasan por un proxy server-side de Next (localFetch) que
+  // inyecta X-Admin-Key y X-Actor; el navegador nunca ve la key de admin.
+  approveMarketingTicket: (planId: string, ticketId: string) =>
+    localFetch<Plan90Ticket>(
+      `/api/marketing/${planId}/tickets/${ticketId}/approve`,
+      { method: 'PATCH' },
+    ),
+  rejectMarketingTicket: (planId: string, ticketId: string, motivo?: string | null) =>
+    localFetch<Plan90Ticket>(
+      `/api/marketing/${planId}/tickets/${ticketId}/reject`,
+      { method: 'PATCH', body: JSON.stringify({ motivo: motivo ?? null }) },
+    ),
   executeMarketingIaAutomatizacion: (planId: string) =>
     apiFetch<IaAutomatizacionRecord>(`/marketing/${planId}/execute-iaautomatizacion`, { method: 'POST' }),
   getMarketingIaAutomatizacion: (planId: string) =>

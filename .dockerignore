@@ -1,0 +1,33 @@
+# Control de versiones / herramientas
+.git
+.gitignore
+.claude/
+
+# Frontend (no entra en la imagen del backend)
+frontend/
+
+# Caches / artefactos Python
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Notas de sesión y respaldos
+SESION_*
+api/respaldo_*/
+
+# Datos locales en archivos (solo se usan sin DATABASE_URL; no van a la imagen)
+api/marketing_plans/
+api/metricas_clave/
+api/ia_automatizacion/
+api/plan90_tickets/
+api/whatsapp_messages/
+api/reports/
+api/agents/
+
+# Entornos virtuales / env locales
+.venv/
+venv/
+.env
+.env.*

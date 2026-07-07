@@ -16,6 +16,7 @@ from models import (
     ContentJobStatus,
     ContentPiece,
     ContentPiecesRecord,
+    EstadoAprobacion,
     IaAutomatizacionItem,
     IaAutomatizacionRecord,
     MarketingActionTicketsRecord,
@@ -26,12 +27,16 @@ from models import (
     MetricasClaveRecord,
     Plan90Dias,
     Plan90DiasTicketsRecord,
+    Plan90ExecutionLogEntry,
+    Plan90Ticket,
     Prioridad,
     Ticket,
     WhatsAppMessage,
     WhatsAppMessagesRecord,
 )
 from audit_engine import run_full_audit
+from project_engine import ProjectStore
+from wp_agent_client import WPAgentClient
 
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
 CONTENT_DIR = Path(__file__).parent / "content_pieces"
@@ -704,20 +709,83 @@ _FASE_ESTIMACION = {
     "mes_2": 30,
     "mes_3": 20,
 }
+# Rango de semanas (1-12) que cubre cada fase, usado como fallback cuando la
+# acción no trae un "Día N"/"Semana N" explícito en su texto.
+_FASE_SEMANAS = {
+    "semana_1_2": (1, 2),
+    "semana_3_4": (3, 4),
+    "mes_2": (5, 8),
+    "mes_3": (9, 12),
+}
+
+_SEMANA_RE = re.compile(r"semana\s+(\d{1,2})", re.IGNORECASE)
+_DIA_RE = re.compile(r"d[íi]a\s+(\d{1,3})", re.IGNORECASE)
 
 
-def _build_plan90_tickets(plan_id: str, plan_record: MarketingPlanRecord) -> List[Ticket]:
+def _derive_semana(fase_key: str, titulo: str, pos: int, count: int) -> int:
+    """Deriva la semana (1-12) de una acción de forma determinista.
+
+    1) Si el texto trae "Semana N" explícito, usa N.
+    2) Si trae "Día N", convierte a semana con ceil(N/7).
+    3) Si no, reparte las acciones de la fase uniformemente en su rango de
+       semanas según su posición.
+    El resultado siempre se acota a [1, 12].
+    """
+    m = _SEMANA_RE.search(titulo)
+    if m:
+        return min(max(int(m.group(1)), 1), 12)
+
+    m = _DIA_RE.search(titulo)
+    if m:
+        semana = (int(m.group(1)) + 6) // 7  # ceil(dia / 7)
+        return min(max(semana, 1), 12)
+
+    lo, hi = _FASE_SEMANAS[fase_key]
+    span = hi - lo + 1
+    if count <= 1:
+        return lo
+    return lo + min((pos * span) // count, span - 1)
+
+
+# Clasificación heurística (determinista) de cada acción hacia uno de los
+# módulos del plan de marketing. Se evalúa en orden; la primera coincidencia
+# gana. Si ninguna coincide, cae en el propio Módulo 6 (la acción es puramente
+# de coordinación/ejecución del plan). No usa IA: es una aproximación por
+# palabras clave, no una clasificación semántica.
+_MODULO_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
+    ("Módulo 5: Estrategia WhatsApp", ("whatsapp", "joinchat")),
+    ("Módulo 3: Calendario de contenido", ("calendario", "contenido", "reel", "blog", "instagram", "publicar", "newsletter", "post")),
+    ("Módulo 4: Embudo de ventas", ("klaviyo", "email", "carrito abandonado", "embudo", "checkout", "reactivación", "upsell", "cross-sell", "referidos")),
+    ("Módulo 2: Estrategia de adquisición", ("google ads", "meta ads", "shopping", "pauta", "campaña", "remarketing", "retargeting", "lookalike", "pixel", "píxel", "influencer", "merchant center")),
+    ("Módulo 8: Métricas clave", ("métrica", "metrica", "reporte", "roas", "cpl", "analytics", "search console", "kpi", "conversión del checkout", "posicionamiento")),
+    ("Módulo 7: IA y automatización", ("automatización", "chatbot", "tidio", "chat en vivo")),
+    ("Módulo 1: Diagnóstico inicial", ("pagespeed", "seguridad", "headers", "ssl", "auditoría", "diagnóstico")),
+]
+_MODULO_DEFAULT = "Módulo 6: Plan de Ejecución 90 días"
+
+
+def _derive_modulo_origen(titulo: str) -> str:
+    t = titulo.lower()
+    for modulo, keywords in _MODULO_KEYWORDS:
+        if any(kw in t for kw in keywords):
+            return modulo
+    return _MODULO_DEFAULT
+
+
+def _build_plan90_tickets(plan_id: str, plan_record: MarketingPlanRecord) -> List[Plan90Ticket]:
     plan90 = plan_record.plan.plan_ejecucion_90_dias
     project_id = plan_record.request.project_id
-    tickets: List[Ticket] = []
+    tickets: List[Plan90Ticket] = []
     idx = 0
     for fase_key, fase_label in _FASE_PLAN90:
         prioridad = _FASE_PRIORIDAD[fase_key]
         estimacion = _FASE_ESTIMACION[fase_key]
-        for accion in getattr(plan90, fase_key):
+        acciones = getattr(plan90, fase_key)
+        for pos, accion in enumerate(acciones):
             idx += 1
+            semana = _derive_semana(fase_key, accion, pos, len(acciones))
             tickets.append(
-                Ticket(
+                Plan90Ticket(
                     id=f"TKT-90D-{plan_id[-6:]}-{idx:02d}",
                     categoria=Categoria.Marketing,
                     titulo=accion,
@@ -727,6 +795,10 @@ def _build_plan90_tickets(plan_id: str, plan_record: MarketingPlanRecord) -> Lis
                     estimacion=estimacion,
                     dependencias=[],
                     project_id=project_id,
+                    semana=semana,
+                    modulo_origen=_derive_modulo_origen(accion),
+                    # Invariante no-auto-approve: TODOS nacen pendientes de revisión.
+                    estado_aprobacion=EstadoAprobacion.pendiente_revision,
                 )
             )
     return tickets
@@ -777,6 +849,269 @@ async def _run_plan90_job(plan_id: str, plan_record: MarketingPlanRecord) -> Non
             error=str(exc),
         )
     Plan90DiasTicketsStore.save(record)
+
+
+# ---------------------------------------------------------------------------
+# Capa de aprobación manual de los tickets del Plan 90 días (Módulo 6)
+#
+# La persistencia es por-plan (un registro Plan90DiasTicketsRecord con la lista
+# embebida), así que aprobar/rechazar un ticket significa cargar el registro,
+# mutar el ticket concreto y volver a guardar el registro completo. Por eso
+# estos endpoints reciben plan_id además de ticket_id.
+#
+# NOTA DE SCOPE: aquí NO se ejecuta ningún ticket. Las transiciones a
+# en_ejecucion/completado son de la sesión POSTERIOR y no existen todavía.
+# ---------------------------------------------------------------------------
+
+class Plan90TicketNotFound(ValueError):
+    """El plan no tiene tickets generados, o el ticket_id no existe."""
+
+
+class Plan90TicketTransitionError(Exception):
+    """Transición de estado_aprobacion no permitida por el flujo."""
+
+
+class Plan90TicketNotExecutable(Exception):
+    """El ticket no pertenece al subset ejecutable vía WordPress (modulo_origen)."""
+
+
+class Plan90ExecutionConfigError(Exception):
+    """No se puede determinar contra qué sitio/con qué key ejecutar el ticket:
+    falta project_id, el proyecto no existe, o no tiene site_url/wprepro_api_key.
+    Fallo explícito — nunca se cae al WPREPRO_API_KEY global (ese fallback causó
+    los 403 en clientes reales)."""
+
+
+class Plan90ExecutionError(Exception):
+    """El WPRepro Agent rechazó o falló la acción. El ticket vuelve a 'aprobado'
+    con error_ejecucion registrado para poder reintentarse."""
+
+
+# Único módulo cuyas acciones son ejecutables vía WordPress hoy: las técnicas que
+# _derive_modulo_origen clasifica como diagnóstico (ssl/headers/pagespeed/...).
+# El resto son acciones de marketing sin representación en el WPRepro Agent.
+EXECUTABLE_MODULO = "Módulo 1: Diagnóstico inicial"
+
+
+def _load_plan90_record_or_raise(plan_id: str) -> Plan90DiasTicketsRecord:
+    record = Plan90DiasTicketsStore.load(plan_id)
+    if not record:
+        raise Plan90TicketNotFound(
+            f"No hay tickets del Plan 90 días para el plan '{plan_id}'. "
+            f"Genéralos primero con POST /marketing/{plan_id}/generate-tickets."
+        )
+    return record
+
+
+def _find_plan90_ticket(record: Plan90DiasTicketsRecord, ticket_id: str) -> Plan90Ticket:
+    for ticket in record.tickets:
+        if ticket.id == ticket_id:
+            return ticket
+    raise Plan90TicketNotFound(
+        f"Ticket '{ticket_id}' no encontrado en el plan '{record.plan_id}'."
+    )
+
+
+def list_plan90_tickets(
+    plan_id: str,
+    estado: Optional[EstadoAprobacion] = None,
+    semana: Optional[int] = None,
+) -> Plan90DiasTicketsRecord:
+    """Devuelve el registro del plan con la lista de tickets filtrada por
+    estado_aprobacion y/o semana (no muta el registro almacenado)."""
+    record = _load_plan90_record_or_raise(plan_id)
+    tickets = record.tickets
+    if estado is not None:
+        tickets = [t for t in tickets if t.estado_aprobacion == estado]
+    if semana is not None:
+        tickets = [t for t in tickets if t.semana == semana]
+    return record.model_copy(update={"tickets": tickets})
+
+
+def approve_plan90_ticket(
+    plan_id: str, ticket_id: str, actor: Optional[str] = None
+) -> Plan90Ticket:
+    """Transición pendiente_revision -> aprobado. Acción HUMANA explícita:
+    es el único punto del código que pone un ticket en 'aprobado'. `actor` es la
+    identidad (auto-declarada) del operador, tomada del header X-Actor en la capa
+    HTTP; queda registrada en el ticket para trazabilidad."""
+    record = _load_plan90_record_or_raise(plan_id)
+    ticket = _find_plan90_ticket(record, ticket_id)
+    if ticket.estado_aprobacion != EstadoAprobacion.pendiente_revision:
+        raise Plan90TicketTransitionError(
+            f"Solo se puede aprobar un ticket en 'pendiente_revision'; "
+            f"'{ticket_id}' está en '{ticket.estado_aprobacion.value}'."
+        )
+    ticket.estado_aprobacion = EstadoAprobacion.aprobado
+    ticket.motivo_rechazo = None
+    ticket.aprobado_por = actor
+    Plan90DiasTicketsStore.save(record)
+    return ticket
+
+
+def reject_plan90_ticket(
+    plan_id: str, ticket_id: str, motivo: Optional[str] = None, actor: Optional[str] = None
+) -> Plan90Ticket:
+    """Transición pendiente_revision -> rechazado, con motivo opcional. `actor`
+    es la identidad (auto-declarada) del operador que rechaza, registrada para
+    trazabilidad (ver approve_plan90_ticket)."""
+    record = _load_plan90_record_or_raise(plan_id)
+    ticket = _find_plan90_ticket(record, ticket_id)
+    if ticket.estado_aprobacion != EstadoAprobacion.pendiente_revision:
+        raise Plan90TicketTransitionError(
+            f"Solo se puede rechazar un ticket en 'pendiente_revision'; "
+            f"'{ticket_id}' está en '{ticket.estado_aprobacion.value}'."
+        )
+    ticket.estado_aprobacion = EstadoAprobacion.rechazado
+    ticket.motivo_rechazo = motivo
+    ticket.rechazado_por = actor
+    Plan90DiasTicketsStore.save(record)
+    return ticket
+
+
+# ---------------------------------------------------------------------------
+# Ejecución real de tickets aprobados (M6 Sesión 3)
+#
+# SCOPE: solo el subset EXECUTABLE_MODULO se ejecuta vía WordPress. La acción
+# concreta que se corre es todavía un STUB verificable (wp plugin list, read-only):
+# esta sesión construye la máquina de estados + auth + resolución de key por
+# proyecto + auditoría; el mapeo real título->WP-CLI/snippet es de la Sesión 4.
+# ---------------------------------------------------------------------------
+
+# Acción placeholder read-only. WP-CLI dentro de la whitelist del plugin; no muta
+# el sitio. Se reemplaza por el mapeo real por ticket en la Sesión 4.
+_STUB_EXECUTE_COMMANDS = ["wp plugin list"]
+
+
+class Plan90ExecutionLog:
+    """Log append-only (espejo de fix_engine.FixLog) de cada intento de ejecución."""
+
+    @staticmethod
+    def _path(ticket_id: str) -> Path:
+        _dir = Path(__file__).parent / "plan90_execution_log"
+        _dir.mkdir(parents=True, exist_ok=True)
+        return _dir / f"{ticket_id}.jsonl"
+
+    @classmethod
+    def append(cls, entry: Plan90ExecutionLogEntry) -> None:
+        if db.is_configured():
+            from psycopg.types.json import Json
+
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO plan90_execution_log (ticket_id, data) VALUES (%s, %s)",
+                    (entry.ticket_id, Json(json.loads(entry.model_dump_json()))),
+                )
+            return
+        with cls._path(entry.ticket_id).open("a", encoding="utf-8") as fh:
+            fh.write(entry.model_dump_json() + "\n")
+
+    @classmethod
+    def read(cls, ticket_id: str) -> List[Plan90ExecutionLogEntry]:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data FROM plan90_execution_log WHERE ticket_id = %s ORDER BY id ASC",
+                    (ticket_id,),
+                )
+                rows = cur.fetchall()
+            return [Plan90ExecutionLogEntry(**r[0]) for r in rows]
+        path = cls._path(ticket_id)
+        if not path.exists():
+            return []
+        return [
+            Plan90ExecutionLogEntry(**json.loads(line))
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+
+def _log_execution(plan_id: str, ticket_id: str, actor: str, outcome: str, detail: Optional[str] = None) -> None:
+    Plan90ExecutionLog.append(
+        Plan90ExecutionLogEntry(
+            plan_id=plan_id,
+            ticket_id=ticket_id,
+            actor=actor,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            outcome=outcome,
+            detail=detail,
+        )
+    )
+
+
+def _resolve_project_target(ticket: Plan90Ticket) -> Tuple[str, str]:
+    """Devuelve (site_url, wprepro_api_key) del proyecto del ticket, o lanza
+    Plan90ExecutionConfigError. NO usa resolve_api_key(): nunca cae al global."""
+    if not ticket.project_id:
+        raise Plan90ExecutionConfigError(
+            f"El ticket '{ticket.id}' no tiene project_id — no se puede saber contra "
+            f"qué sitio ejecutar. Regenera los tickets desde un plan con project_id."
+        )
+    project = ProjectStore.get(ticket.project_id)
+    if not project:
+        raise Plan90ExecutionConfigError(
+            f"No existe el proyecto '{ticket.project_id}' del ticket '{ticket.id}'."
+        )
+    if not project.site_url:
+        raise Plan90ExecutionConfigError(
+            f"El proyecto '{ticket.project_id}' no tiene site_url configurado."
+        )
+    if not project.wprepro_api_key:
+        raise Plan90ExecutionConfigError(
+            f"El proyecto '{ticket.project_id}' no tiene wprepro_api_key propia. "
+            f"Configúrala en el proyecto (no se usa la key global)."
+        )
+    return project.site_url, project.wprepro_api_key
+
+
+def execute_plan90_ticket(plan_id: str, ticket_id: str, actor: str) -> Plan90Ticket:
+    """Ejecuta un ticket APROBADO del subset técnico contra su sitio WordPress.
+
+    Flujo de estados: aprobado -> en_ejecucion (persistido) -> completado (OK) /
+    de vuelta a aprobado con error_ejecucion (falla). Cada intento queda en el
+    log de auditoría. La key se resuelve por proyecto, sin fallback al global.
+    """
+    record = _load_plan90_record_or_raise(plan_id)
+    ticket = _find_plan90_ticket(record, ticket_id)
+
+    if ticket.estado_aprobacion != EstadoAprobacion.aprobado:
+        raise Plan90TicketTransitionError(
+            f"Solo se puede ejecutar un ticket en 'aprobado'; "
+            f"'{ticket_id}' está en '{ticket.estado_aprobacion.value}'."
+        )
+    if ticket.modulo_origen != EXECUTABLE_MODULO:
+        raise Plan90TicketNotExecutable(
+            f"El ticket '{ticket_id}' ({ticket.modulo_origen}) no es ejecutable vía "
+            f"WordPress. Solo '{EXECUTABLE_MODULO}' lo es."
+        )
+
+    # Resuelve el objetivo ANTES de mover el estado: si no hay sitio/key, el ticket
+    # se queda en 'aprobado' y no se registra un intento fallido espurio.
+    site_url, api_key = _resolve_project_target(ticket)
+
+    # Persistir en_ejecucion antes de la llamada (visible para polling/otros lectores).
+    ticket.estado_aprobacion = EstadoAprobacion.en_ejecucion
+    ticket.ejecutado_por = actor
+    ticket.ejecutado_at = datetime.now(timezone.utc).isoformat()
+    ticket.error_ejecucion = None
+    Plan90DiasTicketsStore.save(record)
+    _log_execution(plan_id, ticket_id, actor, "started", detail=" ".join(_STUB_EXECUTE_COMMANDS))
+
+    try:
+        client = WPAgentClient(site_url, api_key)
+        result = client.execute(_STUB_EXECUTE_COMMANDS)  # STUB: acción real en Sesión 4
+    except Exception as exc:
+        ticket.estado_aprobacion = EstadoAprobacion.aprobado
+        ticket.error_ejecucion = str(exc)
+        Plan90DiasTicketsStore.save(record)
+        _log_execution(plan_id, ticket_id, actor, "failed", detail=str(exc))
+        raise Plan90ExecutionError(str(exc)) from exc
+
+    ticket.estado_aprobacion = EstadoAprobacion.completado
+    ticket.error_ejecucion = None
+    Plan90DiasTicketsStore.save(record)
+    _log_execution(plan_id, ticket_id, actor, "completed", detail=json.dumps(result)[:500])
+    return ticket
 
 
 # ---------------------------------------------------------------------------

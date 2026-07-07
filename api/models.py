@@ -517,12 +517,69 @@ class MarketingActionTicketsRecord(BaseModel):
     error: Optional[str] = None
 
 
+class EstadoAprobacion(str, Enum):
+    """Flujo de aprobación manual de los tickets del Plan 90 días (Módulo 6).
+
+    Flujo válido: pendiente_revision -> aprobado -> en_ejecucion -> completado
+                  pendiente_revision -> rechazado
+
+    Invariante: ningún ticket llega a `aprobado` automáticamente. Solo el
+    endpoint PATCH .../approve (acción humana explícita) hace esa transición.
+    La ejecución (en_ejecucion/completado) es una sesión POSTERIOR — todavía
+    no hay código que produzca esas transiciones.
+    """
+    pendiente_revision = "pendiente_revision"
+    aprobado = "aprobado"
+    rechazado = "rechazado"
+    en_ejecucion = "en_ejecucion"
+    completado = "completado"
+
+
+class Plan90Ticket(Ticket):
+    """Ticket del Plan de Ejecución 90 días (Módulo 6).
+
+    Extiende el `Ticket` compartido (M9/auditoría) SIN modificarlo, añadiendo
+    los campos propios del flujo de aprobación manual. Los defaults permiten
+    cargar registros antiguos (generados antes de este flujo) sin romper.
+    """
+    semana: int = Field(default=1, ge=1, le=12, description="Semana asignada (1-12) dentro del plan de 90 días")
+    modulo_origen: str = Field(
+        default="Módulo 6: Plan de Ejecución 90 días",
+        description="Módulo del plan de marketing del que proviene la acción",
+    )
+    estado_aprobacion: EstadoAprobacion = EstadoAprobacion.pendiente_revision
+    motivo_rechazo: Optional[str] = None
+    # Identidad (auto-declarada) del operador que ejecutó la transición, tomada
+    # del header X-Actor bajo la key de admin. None en registros previos a la
+    # capa de auth y en las transiciones hechas por código sin actor explícito.
+    aprobado_por: Optional[str] = None
+    rechazado_por: Optional[str] = None
+    # Ejecución real contra WordPress (M6 Sesión 3). Se pueblan al pasar por
+    # /execute; error_ejecucion queda seteado si el intento falló (el ticket
+    # vuelve a 'aprobado' para poder reintentarse).
+    ejecutado_por: Optional[str] = None
+    ejecutado_at: Optional[str] = None
+    error_ejecucion: Optional[str] = None
+
+
 class Plan90DiasTicketsRecord(BaseModel):
     plan_id: str
-    tickets: List[Ticket] = []
+    tickets: List[Plan90Ticket] = []
     created_at: str
     status: ContentJobStatus = ContentJobStatus.DONE
     error: Optional[str] = None
+
+
+class Plan90ExecutionLogEntry(BaseModel):
+    """Registro append-only de cada intento de ejecución de un ticket del Plan 90
+    contra WordPress (auditoría — espejo de FixLogEntry). `outcome` es uno de
+    'started' | 'completed' | 'failed'."""
+    plan_id: str
+    ticket_id: str
+    actor: str
+    timestamp: str
+    outcome: str
+    detail: Optional[str] = None
 
 
 class IaAutomatizacionItem(BaseModel):
