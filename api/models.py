@@ -501,6 +501,19 @@ class ContentJobStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class ContentTokenUsageRecord(BaseModel):
+    """Un registro por llamada REAL del ContentAgent (Módulo 3). Append-only:
+    sirve para medir consumo/costo real y validar el pricing del producto
+    'PDF + Contenido Real'."""
+    plan_id: str
+    project_id: Optional[str] = None
+    modelo_usado: str
+    input_tokens: int
+    output_tokens: int
+    num_piezas: int
+    timestamp: str
+
+
 class ContentPiecesRecord(BaseModel):
     plan_id: str
     pieces: List[ContentPiece] = []

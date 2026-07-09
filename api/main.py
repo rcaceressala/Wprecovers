@@ -52,6 +52,7 @@ from db import init_db
 from fix_engine import FIX_CATALOG, FixEngine, FixLog, RollbackManager
 from marketing_engine import (
     ContentPieceStore,
+    ContentTokenUsageStore,
     IaAutomatizacionStore,
     MarketingActionTicketsStore,
     MarketingPlanStore,
@@ -1206,6 +1207,18 @@ def require_admin(
             detail="Falta el header X-Actor (identidad del operador que aprueba/rechaza).",
         )
     return actor
+
+
+@app.get("/marketing/content/token-usage", tags=["M10 Marketing OS"])
+def get_content_token_usage(
+    last_n: int = Query(20, ge=1, le=500, description="Cuántas de las últimas generaciones promediar"),
+    project_id: Optional[str] = Query(None, description="Filtrar por proyecto; omitir = global"),
+    actor: str = Depends(require_admin),
+):
+    """Consumo real de tokens del ContentAgent (Módulo 3) y costo estimado, sobre
+    las últimas N generaciones REALES a Claude. Solo lectura. Requiere X-Admin-Key
+    + X-Actor (ver require_admin) — no es público, expone datos de costo internos."""
+    return ContentTokenUsageStore.averages(last_n=last_n, project_id=project_id)
 
 
 @app.post("/marketing/{plan_id}/generate-tickets", status_code=202, tags=["M10 Marketing OS"])

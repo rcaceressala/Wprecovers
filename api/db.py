@@ -233,3 +233,21 @@ def init_db() -> None:
                     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+
+            # marketing_engine.py — ContentTokenUsageStore (append-only: tokens de
+            # CADA llamada real del ContentAgent — Módulo 3 — para medir el costo
+            # real por calendario y validar pricing. Un registro por generación
+            # exitosa; los cache hits no llegan aquí.)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS content_token_usage (
+                    id SERIAL PRIMARY KEY,
+                    plan_id TEXT NOT NULL,
+                    project_id TEXT,
+                    modelo_usado TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    num_piezas INTEGER NOT NULL,
+                    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS content_token_usage_project_idx ON content_token_usage (project_id)")

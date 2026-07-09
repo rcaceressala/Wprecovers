@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 import uuid
@@ -16,6 +17,7 @@ from models import (
     ContentJobStatus,
     ContentPiece,
     ContentPiecesRecord,
+    ContentTokenUsageRecord,
     EstadoAprobacion,
     IaAutomatizacionItem,
     IaAutomatizacionRecord,
@@ -38,8 +40,11 @@ from audit_engine import run_full_audit
 from project_engine import ProjectStore
 from wp_agent_client import WPAgentClient
 
+logger = logging.getLogger("content_agent")
+
 PLANS_DIR = Path(__file__).parent / "marketing_plans"
 CONTENT_DIR = Path(__file__).parent / "content_pieces"
+CONTENT_TOKENS_DIR = Path(__file__).parent / "content_token_usage"
 ACTIONS_DIR = Path(__file__).parent / "action_tickets"
 MESSAGES_DIR = Path(__file__).parent / "whatsapp_messages"
 PLAN90_DIR = Path(__file__).parent / "plan90_tickets"
@@ -52,6 +57,13 @@ _MAX_TOKENS = 32000
 # contenido con max_tokens=32000 puede superar ese límite bajo carga, así que lo
 # subimos explícitamente (con margen sobre el mínimo de 120s pedido).
 _CLIENT_TIMEOUT = 900.0
+
+# Pricing oficial vigente por modelo, en USD por millón de tokens (input, output).
+# Se usa sólo para estimar costo en el endpoint de consulta; los tokens crudos se
+# guardan sin transformar para poder recalcular si cambia el pricing.
+_CONTENT_TOKEN_PRICING: Dict[str, Tuple[float, float]] = {
+    "claude-sonnet-4-6": (3.0, 15.0),
+}
 
 
 def _anthropic_client(_anthropic: Any) -> Any:
@@ -232,7 +244,9 @@ class ContentAgent:
 
     def run(
         self, req: MarketingGenerateRequest, calendario: List[ContentCalendarItem]
-    ) -> Tuple[List[ContentPiece], int]:
+    ) -> Tuple[List[ContentPiece], int, int]:
+        """Devuelve (piezas, input_tokens, output_tokens). Los tokens son los de
+        la llamada real a Claude, para poder loguear el consumo y medir costo."""
         try:
             import anthropic as _anthropic
         except ImportError as exc:
@@ -244,7 +258,7 @@ class ContentAgent:
         user_msg = self._build_user_message(req, calendario)
         messages = [{"role": "user", "content": user_msg}]
 
-        text, tokens, stop_reason = self._invoke(client, messages)
+        text, input_tokens, output_tokens, stop_reason = self._invoke(client, messages)
         parsed = self._parse_json(text)
         piezas = parsed.get("piezas") if parsed else None
 
@@ -260,9 +274,9 @@ class ContentAgent:
             )
 
         pieces = [ContentPiece(**item) for item in piezas]
-        return pieces, tokens
+        return pieces, input_tokens, output_tokens
 
-    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, str]:
+    def _invoke(self, client: Any, messages: List[Dict[str, Any]]) -> Tuple[str, int, int, str]:
         with client.messages.stream(
             model=self.MODEL,
             max_tokens=_MAX_TOKENS,
@@ -271,8 +285,8 @@ class ContentAgent:
         ) as stream:
             response = stream.get_final_message()
         text = next((b.text for b in response.content if b.type == "text"), "")
-        tokens = response.usage.input_tokens + response.usage.output_tokens
-        return text, tokens, response.stop_reason
+        usage = response.usage
+        return text, usage.input_tokens, usage.output_tokens, response.stop_reason
 
     @staticmethod
     def _build_user_message(req: MarketingGenerateRequest, calendario: List[ContentCalendarItem]) -> str:
@@ -460,6 +474,148 @@ class ContentPieceStore:
         return ContentPiecesRecord(**json.loads(path.read_text(encoding="utf-8")))
 
 
+# ---------------------------------------------------------------------------
+# ContentTokenUsageStore — append-only: 1 registro por llamada real del
+# ContentAgent, para medir consumo/costo real y validar pricing.
+# ---------------------------------------------------------------------------
+
+class ContentTokenUsageStore:
+    @staticmethod
+    def _path() -> Path:
+        CONTENT_TOKENS_DIR.mkdir(parents=True, exist_ok=True)
+        return CONTENT_TOKENS_DIR / "usage.jsonl"
+
+    @classmethod
+    def append(cls, record: ContentTokenUsageRecord) -> None:
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO content_token_usage
+                        (plan_id, project_id, modelo_usado, input_tokens, output_tokens, num_piezas)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        record.plan_id,
+                        record.project_id,
+                        record.modelo_usado,
+                        record.input_tokens,
+                        record.output_tokens,
+                        record.num_piezas,
+                    ),
+                )
+            return
+
+        with cls._path().open("a", encoding="utf-8") as fh:
+            fh.write(record.model_dump_json() + "\n")
+
+    @classmethod
+    def recent(cls, last_n: int = 20, project_id: Optional[str] = None) -> List[ContentTokenUsageRecord]:
+        """Últimas N generaciones, más recientes primero."""
+        if db.is_configured():
+            with db.get_connection() as conn, conn.cursor() as cur:
+                if project_id:
+                    cur.execute(
+                        """
+                        SELECT plan_id, project_id, modelo_usado, input_tokens,
+                               output_tokens, num_piezas, inserted_at
+                        FROM content_token_usage
+                        WHERE project_id = %s
+                        ORDER BY id DESC LIMIT %s
+                        """,
+                        (project_id, last_n),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT plan_id, project_id, modelo_usado, input_tokens,
+                               output_tokens, num_piezas, inserted_at
+                        FROM content_token_usage
+                        ORDER BY id DESC LIMIT %s
+                        """,
+                        (last_n,),
+                    )
+                rows = cur.fetchall()
+            return [
+                ContentTokenUsageRecord(
+                    plan_id=r[0], project_id=r[1], modelo_usado=r[2],
+                    input_tokens=r[3], output_tokens=r[4], num_piezas=r[5],
+                    timestamp=r[6].isoformat() if hasattr(r[6], "isoformat") else str(r[6]),
+                )
+                for r in rows
+            ]
+
+        path = cls._path()
+        if not path.exists():
+            return []
+        records: List[ContentTokenUsageRecord] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            rec = ContentTokenUsageRecord(**json.loads(line))
+            if project_id and rec.project_id != project_id:
+                continue
+            records.append(rec)
+        records.reverse()  # más recientes primero
+        return records[:last_n]
+
+    @classmethod
+    def averages(cls, last_n: int = 20, project_id: Optional[str] = None) -> Dict[str, Any]:
+        """Promedio de input/output tokens y costo estimado (USD) de las últimas
+        N generaciones reales. El costo se calcula por-registro con el pricing de
+        su propio modelo y luego se promedia, así mezclas de modelos no rompen la cifra."""
+        records = cls.recent(last_n=last_n, project_id=project_id)
+        n = len(records)
+        if n == 0:
+            return {
+                "samples": 0,
+                "project_id": project_id,
+                "avg_input_tokens": 0,
+                "avg_output_tokens": 0,
+                "avg_num_piezas": 0,
+                "avg_cost_usd": 0.0,
+                "avg_cost_usd_per_pieza": 0.0,
+                "nota": "No hay generaciones registradas todavía.",
+            }
+
+        total_in = sum(r.input_tokens for r in records)
+        total_out = sum(r.output_tokens for r in records)
+        total_piezas = sum(r.num_piezas for r in records)
+
+        # El costo se agrega SOLO sobre registros con pricing conocido y se
+        # promedia sobre ESE subconjunto (n_priced). Antes se dividía por n
+        # (todos), lo que subestimaba el costo cuando alguna generación usó un
+        # modelo sin pricing: su costo entraba como 0 pero seguía contando en n.
+        total_cost = 0.0
+        n_priced = 0
+        piezas_priced = 0
+        modelos_sin_pricing: set[str] = set()
+        for r in records:
+            pricing = _CONTENT_TOKEN_PRICING.get(r.modelo_usado)
+            if pricing is None:
+                modelos_sin_pricing.add(r.modelo_usado)
+                continue
+            in_price, out_price = pricing
+            total_cost += r.input_tokens / 1_000_000 * in_price + r.output_tokens / 1_000_000 * out_price
+            n_priced += 1
+            piezas_priced += r.num_piezas
+
+        avg_cost = total_cost / n_priced if n_priced else 0.0
+        return {
+            "samples": n,
+            "samples_con_pricing": n_priced,
+            "project_id": project_id,
+            "modelos": sorted({r.modelo_usado for r in records}),
+            "avg_input_tokens": round(total_in / n, 1),
+            "avg_output_tokens": round(total_out / n, 1),
+            "avg_num_piezas": round(total_piezas / n, 2),
+            "avg_cost_usd": round(avg_cost, 4),
+            "avg_cost_usd_per_pieza": round(total_cost / piezas_priced, 4) if piezas_priced else 0.0,
+            "modelos_sin_pricing": sorted(modelos_sin_pricing),
+        }
+
+
 async def start_content_job(plan_id: str) -> ContentPiecesRecord:
     """Ejecuta el Módulo 3 (Calendario de Contenido) de un plan ya generado.
 
@@ -496,9 +652,26 @@ async def start_content_job(plan_id: str) -> ContentPiecesRecord:
 async def _run_content_job(plan_id: str, plan_record: MarketingPlanRecord) -> None:
     agent = ContentAgent()
     try:
-        pieces, _tokens = await asyncio.to_thread(
+        pieces, input_tokens, output_tokens = await asyncio.to_thread(
             agent.run, plan_record.request, plan_record.plan.calendario_contenido
         )
+        # Logging de tokens de la llamada REAL a Claude (los cache hits salen antes
+        # en start_content_job y nunca llegan aquí). Best-effort: si el logging
+        # falla, NO debe tumbar la generación de contenido ya exitosa.
+        try:
+            ContentTokenUsageStore.append(
+                ContentTokenUsageRecord(
+                    plan_id=plan_id,
+                    project_id=plan_record.request.project_id,
+                    modelo_usado=ContentAgent.MODEL,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    num_piezas=len(pieces),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+        except Exception:
+            logger.exception("No se pudo registrar el uso de tokens del ContentAgent (plan=%s)", plan_id)
         record = ContentPiecesRecord(
             plan_id=plan_id,
             pieces=pieces,
