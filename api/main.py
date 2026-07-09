@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # Trigger Render redeploy
+import asyncio
 import os
 import secrets
 import time
@@ -13,7 +14,7 @@ load_dotenv(Path(__file__).parent / ".env", override=True)
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from pydantic import BaseModel
 
@@ -22,6 +23,7 @@ from models import (
     AuditInput,
     BatchRunRequest,
     CheckoutRequest,
+    ContentJobStatus,
     EstadoAprobacion,
     FixApplyRequest,
     MarketingGenerateRequest,
@@ -968,8 +970,53 @@ async def close_project(project_id: str):
     return ProjectPublic.from_record(record)
 
 
+# ---------------------------------------------------------------------------
+# Auth de operador para las transiciones manuales del Plan 90 días (Módulo 6)
+# y para el reporte integral con contenido real (upsell "PDF + Contenido Real").
+#
+# Mecanismo: API key estática compartida (header X-Admin-Key) comparada en
+# tiempo constante contra WPREPRO_ADMIN_KEY. La key autentica ("¿tienes permiso
+# para operar?") pero no identifica; la identidad la aporta el header X-Actor
+# (email/nombre del operador) y es AUTO-DECLARADA — con una key compartida no se
+# puede verificar quién la usa, solo dejar constancia de quién dice ser.
+#
+# Fail-closed: si WPREPRO_ADMIN_KEY no está configurada en el servidor, la
+# acción queda deshabilitada (503) en vez de quedar abierta.
+#
+# NOTA: definido ANTES de su primer uso (endpoint /full-report) porque los
+# defaults de FastAPI (Depends(require_admin)) se evalúan al importar el módulo.
+# ---------------------------------------------------------------------------
+def require_admin(
+    x_admin_key: Optional[str] = Header(
+        None, alias="X-Admin-Key", description="Clave de administrador para aprobar/rechazar tickets"
+    ),
+    x_actor: Optional[str] = Header(
+        None, alias="X-Actor", description="Identidad (email/nombre) del operador que ejecuta la acción"
+    ),
+) -> str:
+    expected = os.getenv("WPREPRO_ADMIN_KEY", "")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Aprobación deshabilitada: WPREPRO_ADMIN_KEY no está configurada en el servidor.",
+        )
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected):
+        raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente.")
+    actor = (x_actor or "").strip()
+    if not actor:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el header X-Actor (identidad del operador que aprueba/rechaza).",
+        )
+    return actor
+
+
 @app.get("/projects/{project_id}/full-report", tags=["M9 Projects"])
-def get_project_full_report(project_id: str):
+async def get_project_full_report(
+    project_id: str,
+    incluir_contenido_real: bool = False,
+    _actor: str = Depends(require_admin),
+):
     """
     Generate, on-demand, ONE downloadable PDF aggregating everything that
     already exists for the project — no data is created or persisted:
@@ -1002,6 +1049,7 @@ def get_project_full_report(project_id: str):
     # Puente project_id -> plan_id: el plan de marketing y sus módulos M10 se
     # guardan por plan_id. Tomamos el plan más reciente del proyecto.
     marketing = content = whatsapp = plan90 = ia = metricas = actions = None
+    plan_id = None
     plans = MarketingPlanStore.list_all(project_id)
     if plans:
         plan_id = plans[0]["id"]
@@ -1013,8 +1061,36 @@ def get_project_full_report(project_id: str):
         metricas = MetricasClaveStore.load(plan_id)
         actions = MarketingActionTicketsStore.load(plan_id)
 
+    # Upsell "PDF + Contenido Real" (job+poll): si el flag está activo y el
+    # contenido M3 no está listo (DONE) en cache, disparamos su generación en
+    # background y respondemos 202 para que el cliente reintente — NUNCA
+    # bloqueamos el request generando síncrono (eso causaba 502 en Render).
+    if incluir_contenido_real:
+        if plan_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail="El proyecto no tiene plan de marketing; no hay base para generar contenido real.",
+            )
+        if content is None or content.status != ContentJobStatus.DONE:
+            job = await start_content_job(plan_id)
+            if job.status != ContentJobStatus.DONE:
+                # RUNNING (recién lanzado o ya en curso): el cliente reintenta.
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "status": "generating_content",
+                        "plan_id": plan_id,
+                        "detail": (
+                            "Generando las 8 piezas de contenido real. Reintenta "
+                            "GET /full-report?incluir_contenido_real=true en unos segundos."
+                        ),
+                    },
+                )
+            content = job  # DONE en cache: renderizamos con el contenido real.
+
     try:
-        pdf_bytes = FullProjectReport.generate(
+        pdf_bytes = await asyncio.to_thread(
+            FullProjectReport.generate,
             project=record,
             tickets=tickets,
             marketing=marketing,
@@ -1024,6 +1100,7 @@ def get_project_full_report(project_id: str):
             ia=ia,
             metricas=metricas,
             actions=actions,
+            incluir_contenido_real=incluir_contenido_real,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -1170,43 +1247,6 @@ def get_marketing_plan90(plan_id: str):
 
 class TicketRejectRequest(BaseModel):
     motivo: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Auth de operador para las transiciones manuales del Plan 90 días (Módulo 6).
-#
-# Mecanismo: API key estática compartida (header X-Admin-Key) comparada en
-# tiempo constante contra WPREPRO_ADMIN_KEY. La key autentica ("¿tienes permiso
-# para operar?") pero no identifica; la identidad la aporta el header X-Actor
-# (email/nombre del operador) y es AUTO-DECLARADA — con una key compartida no se
-# puede verificar quién la usa, solo dejar constancia de quién dice ser.
-#
-# Fail-closed: si WPREPRO_ADMIN_KEY no está configurada en el servidor, la
-# acción queda deshabilitada (503) en vez de quedar abierta.
-# ---------------------------------------------------------------------------
-def require_admin(
-    x_admin_key: Optional[str] = Header(
-        None, alias="X-Admin-Key", description="Clave de administrador para aprobar/rechazar tickets"
-    ),
-    x_actor: Optional[str] = Header(
-        None, alias="X-Actor", description="Identidad (email/nombre) del operador que ejecuta la acción"
-    ),
-) -> str:
-    expected = os.getenv("WPREPRO_ADMIN_KEY", "")
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="Aprobación deshabilitada: WPREPRO_ADMIN_KEY no está configurada en el servidor.",
-        )
-    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected):
-        raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente.")
-    actor = (x_actor or "").strip()
-    if not actor:
-        raise HTTPException(
-            status_code=400,
-            detail="Falta el header X-Actor (identidad del operador que aprueba/rechaza).",
-        )
-    return actor
 
 
 @app.get("/marketing/content/token-usage", tags=["M10 Marketing OS"])

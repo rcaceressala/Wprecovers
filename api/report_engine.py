@@ -658,6 +658,7 @@ class FullProjectReport:
         ia: Optional[Any] = None,
         metricas: Optional[Any] = None,
         actions: Optional[Any] = None,
+        incluir_contenido_real: bool = False,
     ) -> bytes:
         try:
             from weasyprint import HTML
@@ -760,8 +761,8 @@ class FullProjectReport:
 
         executed: List[str] = []
 
-        # M3 — Contenido
-        if _has(content, "pieces"):
+        # M3 — Contenido (solo si el upsell "Contenido Real" está activo)
+        if incluir_contenido_real and _has(content, "pieces"):
             executed.append('<h3 class="subhead">Contenido (Módulo 3) — piezas listas para publicar</h3>')
             for p in content.pieces:
                 executed.append(
