@@ -643,6 +643,24 @@ class FullProjectReport:
             border-radius: 0 4px 4px 0;
         }
         .prio { font-weight: 700; }
+        .content-card {
+            background: #F8FAFC;
+            border: 1px solid #E5E7EB;
+            border-left: 4px solid #1D6FA4;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin: 0 0 10px;
+            page-break-inside: avoid;
+        }
+        .content-card .cc-head { font-weight: 700; color: #0A2540; font-size: 10.5pt; margin: 0 0 2px; }
+        .content-card .cc-obj  { color: #1D6FA4; font-weight: 600; }
+        .content-card .cc-body { margin: 6px 0; white-space: pre-wrap; }
+        .content-card .cc-meta {
+            border-top: 1px solid #E5E7EB;
+            padding-top: 5px; margin-top: 6px;
+            color: #6B7280; font-size: 8.5pt;
+        }
+        .content-card .cc-tags { color: #1D6FA4; font-weight: 600; }
         .page-break { page-break-before: always; }
     """
 
@@ -765,16 +783,21 @@ class FullProjectReport:
         if incluir_contenido_real and _has(content, "pieces"):
             executed.append('<h3 class="subhead">Contenido (Módulo 3) — piezas listas para publicar</h3>')
             for p in content.pieces:
+                meta_bits = []
+                if p.hashtags:
+                    meta_bits.append(f'<span class="cc-tags">{esc(" ".join(p.hashtags))}</span>')
+                if p.mejor_horario:
+                    meta_bits.append(f'Mejor horario: {esc(p.mejor_horario)}')
+                if p.prompt_imagen:
+                    meta_bits.append(f'<i>Prompt imagen:</i> {esc(p.prompt_imagen)}')
+                meta_html = ' · '.join(meta_bits)
                 executed.append(
-                    f'<div class="line"><b>Día {esc(p.dia)} · {esc(p.formato)}</b> — {esc(p.objetivo)}</div>'
-                )
-                executed.append(f'<div class="line">{esc(p.texto_completo)}</div>')
-                executed.append(
-                    f'<div class="line muted"><i>Prompt imagen:</i> {esc(p.prompt_imagen)}</div>'
-                )
-                executed.append(
-                    f'<div class="line muted">{esc(" ".join(p.hashtags))} · '
-                    f'Mejor horario: {esc(p.mejor_horario)}</div>'
+                    '<div class="content-card">'
+                    f'<div class="cc-head">Día {esc(p.dia)} · {esc(p.formato)} '
+                    f'<span class="cc-obj">— {esc(p.objetivo)}</span></div>'
+                    f'<div class="cc-body">{esc(p.texto_completo)}</div>'
+                    + (f'<div class="cc-meta">{meta_html}</div>' if meta_html else '')
+                    + '</div>'
                 )
 
         # M5 — WhatsApp
