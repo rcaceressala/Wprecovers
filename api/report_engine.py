@@ -661,6 +661,84 @@ class FullProjectReport:
             color: #6B7280; font-size: 8.5pt;
         }
         .content-card .cc-tags { color: #1D6FA4; font-weight: 600; }
+        .nav-pills {
+            margin: 0 0 16px;
+            page-break-inside: avoid;
+            page-break-after: avoid;
+        }
+        .nav-pills .pill {
+            display: inline-block;
+            background: #EAF2F8;
+            color: #1D6FA4;
+            border: 1px solid #CFE0EF;
+            border-radius: 999px;
+            padding: 3px 11px;
+            margin: 0 6px 6px 0;
+            font-size: 8.5pt;
+            font-weight: 600;
+        }
+        .nav-pills .pill .pill-num {
+            color: #6B7280;
+            font-weight: 700;
+            margin-right: 5px;
+        }
+        .tkt-id {
+            display: inline-block;
+            font-family: "DejaVu Sans Mono", "Courier New", monospace;
+            font-size: 8pt;
+            background: #EEF2F7;
+            color: #374151;
+            border: 1px solid #E5E7EB;
+            border-radius: 4px;
+            padding: 1px 6px;
+            margin-right: 6px;
+        }
+        .ia-card {
+            background: #F8FAFC;
+            border: 1px solid #E5E7EB;
+            border-left: 4px solid #1D6FA4;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin: 0 0 10px;
+            page-break-inside: avoid;
+        }
+        .ia-card .ia-head { font-size: 10.5pt; color: #0A2540; margin: 0 0 6px; }
+        .ia-card .ia-badges { margin: 0 0 6px; }
+        .badge {
+            display: inline-block;
+            font-size: 8pt;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 2px 9px;
+            margin: 0 6px 0 0;
+            border: 1px solid #CFE0EF;
+        }
+        .badge-costo { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }
+        .badge-setup { background: #EEF2F7; color: #374151; border-color: #E5E7EB; }
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0 0 12px;
+            font-size: 8.5pt;
+        }
+        .metrics-table thead { display: table-header-group; }
+        .metrics-table th {
+            background: #1D6FA4;
+            color: #FFFFFF;
+            text-align: left;
+            padding: 5px 8px;
+            font-size: 8.5pt;
+        }
+        .metrics-table td {
+            border-bottom: 1px solid #E5E7EB;
+            padding: 5px 8px;
+            vertical-align: top;
+        }
+        .metrics-table tr { page-break-inside: avoid; }
+        .metrics-table .metric-extra td {
+            color: #6B7280;
+            font-size: 8pt;
+        }
         .page-break { page-break-before: always; }
     """
 
@@ -691,10 +769,12 @@ class FullProjectReport:
         esc = cls._esc
         parts: List[str] = []   # fragmentos HTML del cuerpo (post-portada)
         sec = 0                 # contador de secciones mayores
+        section_titles: List[str] = []  # títulos para las nav pills
 
         def section_header(title: str) -> str:
             nonlocal sec
             sec += 1
+            section_titles.append(title)
             return (
                 f'<div class="section-header">'
                 f'<span class="secnum">{sec}</span>{esc(title)}</div>'
@@ -822,40 +902,12 @@ class FullProjectReport:
         # M7 — IA y automatización
         if _has(ia, "items"):
             executed.append('<h3 class="subhead">IA y Automatización (Módulo 7)</h3>')
-            for it in ia.items:
-                prio = getattr(it.prioridad, "value", it.prioridad)
-                color = cls._PRIO_COLOR.get(prio, cls._GRAY)
-                executed.append(
-                    f'<div class="line"><span class="prio" style="color:{color}">[{esc(prio)}]</span> '
-                    f'<b>{esc(it.herramienta)}</b> '
-                    f'<span class="muted">({esc(it.costo)} · {it.estimacion} min)</span></div>'
-                )
-                executed.append(f'<div class="line">{esc(it.caso_uso)}</div>')
-                for paso in it.pasos:
-                    executed.append(f'<div class="line">&nbsp;&nbsp;• {esc(paso)}</div>')
-                if it.mejor_momento:
-                    executed.append(
-                        f'<div class="line muted"><i>Mejor momento:</i> {esc(it.mejor_momento)}</div>'
-                    )
+            executed.extend(cls._render_ia_cards(ia.items))
 
         # M8 — Métricas clave
         if _has(metricas, "items"):
             executed.append('<h3 class="subhead">Métricas Clave (Módulo 8)</h3>')
-            for mt in metricas.items:
-                executed.append(f'<div class="line"><b>{esc(mt.nombre)}</b></div>')
-                executed.append(f'<div class="line"><i>Fórmula:</i> {esc(mt.formula)}</div>')
-                executed.append(
-                    f'<div class="line muted">Benchmark: {esc(mt.benchmark)} · '
-                    f'Objetivo: {esc(mt.objetivo)} · Revisión: {esc(mt.frecuencia_revision)}</div>'
-                )
-                if mt.donde_medir:
-                    executed.append(
-                        f'<div class="line muted">Dónde medir: {esc(", ".join(mt.donde_medir))}</div>'
-                    )
-                if mt.mejor_momento:
-                    executed.append(
-                        f'<div class="line muted"><i>Mejor momento:</i> {esc(mt.mejor_momento)}</div>'
-                    )
+            executed.extend(cls._render_metrics_table(metricas.items))
 
         # M9 — Top 10 acciones (tickets)
         if _has(actions, "tickets"):
@@ -867,10 +919,11 @@ class FullProjectReport:
             parts.append(section_header("Módulos de Marketing Ejecutados"))
             parts.extend(executed)
 
+        nav_pills = cls._render_nav_pills(section_titles)
         html_str = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>{cls._CSS}</style></head><body>"
-            f"{cover}{''.join(parts)}"
+            f"{cover}{nav_pills}{''.join(parts)}"
             "</body></html>"
         )
         return HTML(string=html_str).write_pdf()
@@ -882,13 +935,102 @@ class FullProjectReport:
         for t in tickets:
             prio = getattr(t.prioridad, "value", t.prioridad)
             color = cls._PRIO_COLOR.get(prio, cls._GRAY)
+            tid = getattr(t, "id", "") or ""
+            id_chip = f'<span class="tkt-id">{esc(tid)}</span>' if tid else ""
             out.append(
                 f'<div class="ticket" style="border-left-color:{color}">'
+                f'{id_chip}'
                 f'<span class="prio" style="color:{color}">[{esc(prio)}]</span> '
                 f'{esc(t.titulo)} '
                 f'<span class="muted">({t.estimacion} min)</span></div>'
             )
         return out
+
+    @classmethod
+    def _render_nav_pills(cls, module_names: List[str]) -> str:
+        """Fila de 'pills' de navegación con los módulos incluidos en el reporte.
+        Función pura (devuelve HTML) — testeable sin WeasyPrint."""
+        esc = cls._esc
+        if not module_names:
+            return ""
+        pills = "".join(
+            f'<span class="pill"><span class="pill-num">{i}</span>{esc(name)}</span>'
+            for i, name in enumerate(module_names, start=1)
+        )
+        return f'<div class="nav-pills">{pills}</div>'
+
+    @classmethod
+    def _render_ia_cards(cls, items: List[Any]) -> List[str]:
+        """Fichas de IA (M7) como tarjetas con badges de costo/setup/prioridad.
+        Función pura (devuelve HTML) — testeable sin WeasyPrint."""
+        esc = cls._esc
+        out: List[str] = []
+        for it in items:
+            prio = getattr(it.prioridad, "value", it.prioridad)
+            color = cls._PRIO_COLOR.get(prio, cls._GRAY)
+            tid = getattr(it, "id", "") or ""
+            id_chip = f'<span class="tkt-id">{esc(tid)}</span>' if tid else ""
+            badges = (
+                f'<span class="badge badge-costo">{esc(it.costo)}</span>'
+                f'<span class="badge badge-setup">Setup {it.estimacion} min</span>'
+                f'<span class="badge" style="color:{color};border-color:{color}">'
+                f'{esc(prio)}</span>'
+            )
+            pasos = "".join(
+                f'<div class="line">&nbsp;&nbsp;• {esc(p)}</div>'
+                for p in (getattr(it, "pasos", []) or [])
+            )
+            momento = (
+                f'<div class="line muted"><i>Mejor momento:</i> {esc(it.mejor_momento)}</div>'
+                if getattr(it, "mejor_momento", "")
+                else ""
+            )
+            out.append(
+                '<div class="ia-card">'
+                f'<div class="ia-head">{id_chip}<b>{esc(it.herramienta)}</b></div>'
+                f'<div class="ia-badges">{badges}</div>'
+                f'<div class="line">{esc(it.caso_uso)}</div>'
+                f'{pasos}{momento}'
+                '</div>'
+            )
+        return out
+
+    @classmethod
+    def _render_metrics_table(cls, items: List[Any]) -> List[str]:
+        """Métricas clave (M8) como tabla estructurada (fórmula/benchmark/objetivo).
+        Función pura (devuelve HTML) — testeable sin WeasyPrint."""
+        esc = cls._esc
+        if not items:
+            return []
+        rows: List[str] = []
+        for mt in items:
+            rows.append(
+                "<tr>"
+                f"<td><b>{esc(mt.nombre)}</b></td>"
+                f"<td>{esc(mt.formula)}</td>"
+                f"<td>{esc(mt.benchmark)}</td>"
+                f"<td>{esc(mt.objetivo)}</td>"
+                f"<td>{esc(mt.frecuencia_revision)}</td>"
+                "</tr>"
+            )
+            extra: List[str] = []
+            donde = getattr(mt, "donde_medir", []) or []
+            if donde:
+                extra.append(f"Dónde medir: {esc(', '.join(donde))}")
+            if getattr(mt, "mejor_momento", ""):
+                extra.append(f"Mejor momento: {esc(mt.mejor_momento)}")
+            if extra:
+                rows.append(
+                    f'<tr class="metric-extra"><td colspan="5">{" · ".join(extra)}</td></tr>'
+                )
+        header = (
+            "<tr><th>Métrica</th><th>Fórmula</th><th>Benchmark</th>"
+            "<th>Objetivo</th><th>Revisión</th></tr>"
+        )
+        return [
+            '<table class="metrics-table">'
+            f"<thead>{header}</thead><tbody>{''.join(rows)}</tbody></table>"
+        ]
 
 
 # ---------------------------------------------------------------------------
