@@ -400,6 +400,22 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// Same-origin fetch para las rutas API de Next (no antepone BASE). Se usa en
+// las acciones que pasan por un proxy server-side de Next para no exponer
+// secretos (X-Admin-Key) en el navegador — ver app/api/projects/**/route.ts.
+// La cookie de sesión (wpr_token) viaja automáticamente por ser same-origin.
+export async function localFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...opts?.headers },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
 // ---------------------------------------------------------------------------
 // API client
 // ---------------------------------------------------------------------------
@@ -510,26 +526,29 @@ export const api = {
     ),
 
   // M9 — Projects
+  // list/get/create/audit-and-baseline/close/delete pasan por un proxy
+  // server-side de Next (localFetch) que inyecta X-Admin-Key y X-Actor; el
+  // navegador nunca ve la key de admin — ver app/api/projects/**/route.ts.
   listProjects: () =>
-    apiFetch<{ projects: ProjectSummary[] }>('/projects/'),
+    localFetch<{ projects: ProjectSummary[] }>('/api/projects'),
 
   getProject: (projectId: string) =>
-    apiFetch<ProjectDetail>(`/projects/${projectId}`),
+    localFetch<ProjectDetail>(`/api/projects/${projectId}`),
 
   createProject: (req: { client_name: string; site_url: string; plan: string; notas?: string | null }) =>
-    apiFetch<ProjectDetail>('/projects/', {
+    localFetch<ProjectDetail>('/api/projects', {
       method: 'POST',
       body: JSON.stringify(req),
     }),
 
   captureBaseline: (projectId: string) =>
-    apiFetch<ProjectDetail>(`/projects/${projectId}/audit-and-baseline`, { method: 'POST' }),
+    localFetch<ProjectDetail>(`/api/projects/${projectId}/audit-and-baseline`, { method: 'POST' }),
 
   closeProject: (projectId: string) =>
-    apiFetch<CloseProjectResult>(`/projects/${projectId}/close`, { method: 'POST' }),
+    localFetch<CloseProjectResult>(`/api/projects/${projectId}/close`, { method: 'POST' }),
 
   deleteProject: (projectId: string) =>
-    apiFetch<{ id: string; status: string }>(`/projects/${projectId}`, { method: 'DELETE' }),
+    localFetch<{ id: string; status: string }>(`/api/projects/${projectId}`, { method: 'DELETE' }),
 
   getProjectApiKey: (projectId: string) =>
     apiFetch<{ project_id: string; wprepro_api_key: string }>(`/projects/${projectId}/wprepro-key`),

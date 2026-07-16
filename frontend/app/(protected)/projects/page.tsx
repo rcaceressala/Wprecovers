@@ -6,7 +6,7 @@ import {
   CheckCircle2, Circle, XCircle, Download, ClipboardCheck, Lock, Trash2,
   Copy, Check, KeyRound, Eye,
 } from 'lucide-react'
-import { api } from '@/lib/api'
+import { api, localFetch } from '@/lib/api'
 
 const API_BASE = 'https://wprecovers.onrender.com'
 
@@ -81,7 +81,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function fetchProjects(): Promise<Project[]> {
-  const data = await apiFetch<Project[] | { projects: Project[] }>('/projects')
+  const data = await localFetch<Project[] | { projects: Project[] }>('/api/projects')
   return Array.isArray(data) ? data : data.projects ?? []
 }
 
@@ -313,7 +313,7 @@ function CreateProjectModal({
     setSaving(true)
     setError(null)
     try {
-      const created = await apiFetch<Project>('/projects', {
+      const created = await localFetch<Project>('/api/projects', {
         method: 'POST',
         body: JSON.stringify({
           client_name: clientName.trim(),
@@ -523,7 +523,7 @@ function ProjectDetailModal({
     setBusy(true)
     setError(null)
     try {
-      const updated = await apiFetch<Project>(`/projects/${project.id}/audit-and-baseline`, {
+      const updated = await localFetch<Project>(`/api/projects/${project.id}/audit-and-baseline`, {
         method: 'POST',
       })
       localStorage.setItem('wpr_active_project', JSON.stringify({
@@ -546,7 +546,7 @@ function ProjectDetailModal({
     setBusy(true)
     setError(null)
     try {
-      const updated = await apiFetch<Project>(`/projects/${project.id}/close`, {
+      const updated = await localFetch<Project>(`/api/projects/${project.id}/close`, {
         method: 'POST',
       })
       onUpdated(updated)
