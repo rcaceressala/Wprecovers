@@ -824,35 +824,6 @@ async def verify_project_url(req: VerifyUrlRequest):
         raise HTTPException(status_code=500, detail=f"Verification failed: {e}")
 
 
-@app.post("/projects/", response_model=ProjectRecord, tags=["M9 Projects"])
-def create_project(req: ProjectCreateRequest):
-    """
-    Create a new project in DRAFT status.
-    """
-    return ProjectStore.create(req)
-
-
-@app.get("/projects/", tags=["M9 Projects"])
-def list_projects():
-    """
-    List all projects, most recently created first. Excludes wprepro_api_key
-    — use GET /projects/{id}/wprepro-key to reveal a project's key.
-    """
-    return {"projects": [ProjectPublic.from_record(p) for p in ProjectStore.list_all()]}
-
-
-@app.get("/projects/{project_id}", response_model=ProjectPublic, tags=["M9 Projects"])
-def get_project(project_id: str):
-    """
-    Return a single project record. Excludes wprepro_api_key — use
-    GET /projects/{id}/wprepro-key to reveal it.
-    """
-    record = ProjectStore.get(project_id)
-    if not record:
-        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
-    return ProjectPublic.from_record(record)
-
-
 # ---------------------------------------------------------------------------
 # Auth de operador (hotfix de seguridad).
 #
@@ -866,8 +837,8 @@ def get_project(project_id: str):
 # acción queda deshabilitada (503) en vez de quedar abierta.
 #
 # NOTA: idéntica a la require_admin de M6 (feat/full-project-report, 856fa7c).
-# Se define aquí porque esa rama aún no está en main; al mergear todas quedan
-# iguales y se puede consolidar en un único módulo de auth.
+# Se define aquí (antes de su primer uso, create_project) porque los defaults
+# de FastAPI (Depends(require_admin)) se evalúan al importar el módulo.
 # ---------------------------------------------------------------------------
 def require_admin(
     x_admin_key: Optional[str] = Header(
@@ -894,6 +865,38 @@ def require_admin(
     return actor
 
 
+@app.post("/projects/", response_model=ProjectRecord, tags=["M9 Projects"])
+def create_project(req: ProjectCreateRequest, _actor: str = Depends(require_admin)):
+    """
+    Create a new project in DRAFT status. Requires admin auth (X-Admin-Key
+    + X-Actor).
+    """
+    return ProjectStore.create(req)
+
+
+@app.get("/projects/", tags=["M9 Projects"])
+def list_projects(_actor: str = Depends(require_admin)):
+    """
+    List all projects, most recently created first. Excludes wprepro_api_key
+    — use GET /projects/{id}/wprepro-key to reveal a project's key. Requires
+    admin auth (X-Admin-Key + X-Actor): exposes client project metadata.
+    """
+    return {"projects": [ProjectPublic.from_record(p) for p in ProjectStore.list_all()]}
+
+
+@app.get("/projects/{project_id}", response_model=ProjectPublic, tags=["M9 Projects"])
+def get_project(project_id: str, _actor: str = Depends(require_admin)):
+    """
+    Return a single project record. Excludes wprepro_api_key — use
+    GET /projects/{id}/wprepro-key to reveal it. Requires admin auth
+    (X-Admin-Key + X-Actor): exposes client project data.
+    """
+    record = ProjectStore.get(project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No project found with id '{project_id}'")
+    return ProjectPublic.from_record(record)
+
+
 @app.get("/projects/{project_id}/wprepro-key", response_model=WpreproKeyResponse, tags=["M9 Projects"])
 def get_project_wprepro_key(project_id: str, _actor: str = Depends(require_admin)):
     """
@@ -907,10 +910,11 @@ def get_project_wprepro_key(project_id: str, _actor: str = Depends(require_admin
 
 
 @app.post("/projects/{project_id}/audit-and-baseline", response_model=ProjectPublic, tags=["M9 Projects"])
-async def audit_and_baseline(project_id: str):
+async def audit_and_baseline(project_id: str, _actor: str = Depends(require_admin)):
     """
     Run a fresh M1 audit on the project's site_url and capture it as the baseline.
-    Transitions the project DRAFT -> OPEN.
+    Transitions the project DRAFT -> OPEN. Requires admin auth (X-Admin-Key
+    + X-Actor).
     """
     record = ProjectStore.get(project_id)
     if not record:
@@ -938,13 +942,14 @@ async def audit_and_baseline(project_id: str):
 
 
 @app.post("/projects/{project_id}/close", response_model=ProjectPublic, tags=["M9 Projects"])
-async def close_project(project_id: str):
+async def close_project(project_id: str, _actor: str = Depends(require_admin)):
     """
     Run a final M1 audit, compare against the captured baseline, evaluate the
     improvement guarantee (>= 15 pts), generate the PDF report, and transition
     the project OPEN -> CLOSED.
 
-    The PDF becomes available at GET /report/download/{project_id}.
+    The PDF becomes available at GET /report/download/{project_id}. Requires
+    admin auth (X-Admin-Key + X-Actor).
     """
     record = ProjectStore.get(project_id)
     if not record:
@@ -1066,9 +1071,10 @@ def get_project_full_report(project_id: str, _actor: str = Depends(require_admin
 
 
 @app.delete("/projects/{project_id}", tags=["M9 Projects"])
-def delete_project(project_id: str):
+def delete_project(project_id: str, _actor: str = Depends(require_admin)):
     """
     Permanently delete a project record (removes its JSON file from disk).
+    Requires admin auth (X-Admin-Key + X-Actor).
     """
     record = ProjectStore.get(project_id)
     if not record:
