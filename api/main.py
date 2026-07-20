@@ -837,28 +837,73 @@ async def verify_project_url(req: VerifyUrlRequest):
         raise HTTPException(status_code=500, detail=f"Verification failed: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Auth de operador para las transiciones manuales del Plan 90 días (Módulo 6),
+# el reporte integral con contenido real (upsell "PDF + Contenido Real") y la
+# revelación de la API key de WPRepro Agent de un proyecto.
+#
+# Mecanismo: API key estática compartida (header X-Admin-Key) comparada en
+# tiempo constante contra WPREPRO_ADMIN_KEY. La key autentica ("¿tienes permiso
+# para operar?") pero no identifica; la identidad la aporta el header X-Actor
+# (email/nombre del operador) y es AUTO-DECLARADA — con una key compartida no se
+# puede verificar quién la usa, solo dejar constancia de quién dice ser.
+#
+# Fail-closed: si WPREPRO_ADMIN_KEY no está configurada en el servidor, la
+# acción queda deshabilitada (503) en vez de quedar abierta.
+#
+# NOTA: definido ANTES de su primer uso (create_project) porque los defaults
+# de FastAPI (Depends(require_admin)) se evalúan al importar el módulo.
+# ---------------------------------------------------------------------------
+def require_admin(
+    x_admin_key: Optional[str] = Header(
+        None, alias="X-Admin-Key", description="Clave de administrador para aprobar/rechazar tickets"
+    ),
+    x_actor: Optional[str] = Header(
+        None, alias="X-Actor", description="Identidad (email/nombre) del operador que ejecuta la acción"
+    ),
+) -> str:
+    expected = os.getenv("WPREPRO_ADMIN_KEY", "")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Aprobación deshabilitada: WPREPRO_ADMIN_KEY no está configurada en el servidor.",
+        )
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected):
+        raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente.")
+    actor = (x_actor or "").strip()
+    if not actor:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el header X-Actor (identidad del operador que aprueba/rechaza).",
+        )
+    return actor
+
+
 @app.post("/projects/", response_model=ProjectRecord, tags=["M9 Projects"])
-def create_project(req: ProjectCreateRequest):
+def create_project(req: ProjectCreateRequest, _actor: str = Depends(require_admin)):
     """
-    Create a new project in DRAFT status.
+    Create a new project in DRAFT status. Requires admin auth (X-Admin-Key
+    + X-Actor).
     """
     return ProjectStore.create(req)
 
 
 @app.get("/projects/", tags=["M9 Projects"])
-def list_projects():
+def list_projects(_actor: str = Depends(require_admin)):
     """
     List all projects, most recently created first. Excludes wprepro_api_key
-    — use GET /projects/{id}/wprepro-key to reveal a project's key.
+    — use GET /projects/{id}/wprepro-key to reveal a project's key. Requires
+    admin auth (X-Admin-Key + X-Actor): exposes client project metadata.
     """
     return {"projects": [ProjectPublic.from_record(p) for p in ProjectStore.list_all()]}
 
 
 @app.get("/projects/{project_id}", response_model=ProjectPublic, tags=["M9 Projects"])
-def get_project(project_id: str):
+def get_project(project_id: str, _actor: str = Depends(require_admin)):
     """
     Return a single project record. Excludes wprepro_api_key — use
-    GET /projects/{id}/wprepro-key to reveal it.
+    GET /projects/{id}/wprepro-key to reveal it. Requires admin auth
+    (X-Admin-Key + X-Actor): exposes client project data.
     """
     record = ProjectStore.get(project_id)
     if not record:
@@ -867,10 +912,11 @@ def get_project(project_id: str):
 
 
 @app.get("/projects/{project_id}/wprepro-key", response_model=WpreproKeyResponse, tags=["M9 Projects"])
-def get_project_wprepro_key(project_id: str):
+def get_project_wprepro_key(project_id: str, _actor: str = Depends(require_admin)):
     """
     Reveal the project's WPRepro Agent key — the value to paste into that
-    site's wp-config.php as WPREPRO_API_KEY.
+    site's wp-config.php as WPREPRO_API_KEY. Requires admin auth (X-Admin-Key
+    + X-Actor): this value is a secret credential for the client's site.
     """
     record = ProjectStore.get(project_id)
     if not record:
@@ -879,10 +925,11 @@ def get_project_wprepro_key(project_id: str):
 
 
 @app.post("/projects/{project_id}/audit-and-baseline", response_model=ProjectPublic, tags=["M9 Projects"])
-async def audit_and_baseline(project_id: str):
+async def audit_and_baseline(project_id: str, _actor: str = Depends(require_admin)):
     """
     Run a fresh M1 audit on the project's site_url and capture it as the baseline.
-    Transitions the project DRAFT -> OPEN.
+    Transitions the project DRAFT -> OPEN. Requires admin auth (X-Admin-Key
+    + X-Actor).
     """
     record = ProjectStore.get(project_id)
     if not record:
@@ -910,13 +957,14 @@ async def audit_and_baseline(project_id: str):
 
 
 @app.post("/projects/{project_id}/close", response_model=ProjectPublic, tags=["M9 Projects"])
-async def close_project(project_id: str):
+async def close_project(project_id: str, _actor: str = Depends(require_admin)):
     """
     Run a final M1 audit, compare against the captured baseline, evaluate the
     improvement guarantee (>= 15 pts), generate the PDF report, and transition
     the project OPEN -> CLOSED.
 
-    The PDF becomes available at GET /report/download/{project_id}.
+    The PDF becomes available at GET /report/download/{project_id}. Requires
+    admin auth (X-Admin-Key + X-Actor).
     """
     record = ProjectStore.get(project_id)
     if not record:
@@ -968,47 +1016,6 @@ async def close_project(project_id: str):
     record.updated_at = datetime.now(timezone.utc).isoformat()
     ProjectStore.save(record)
     return ProjectPublic.from_record(record)
-
-
-# ---------------------------------------------------------------------------
-# Auth de operador para las transiciones manuales del Plan 90 días (Módulo 6)
-# y para el reporte integral con contenido real (upsell "PDF + Contenido Real").
-#
-# Mecanismo: API key estática compartida (header X-Admin-Key) comparada en
-# tiempo constante contra WPREPRO_ADMIN_KEY. La key autentica ("¿tienes permiso
-# para operar?") pero no identifica; la identidad la aporta el header X-Actor
-# (email/nombre del operador) y es AUTO-DECLARADA — con una key compartida no se
-# puede verificar quién la usa, solo dejar constancia de quién dice ser.
-#
-# Fail-closed: si WPREPRO_ADMIN_KEY no está configurada en el servidor, la
-# acción queda deshabilitada (503) en vez de quedar abierta.
-#
-# NOTA: definido ANTES de su primer uso (endpoint /full-report) porque los
-# defaults de FastAPI (Depends(require_admin)) se evalúan al importar el módulo.
-# ---------------------------------------------------------------------------
-def require_admin(
-    x_admin_key: Optional[str] = Header(
-        None, alias="X-Admin-Key", description="Clave de administrador para aprobar/rechazar tickets"
-    ),
-    x_actor: Optional[str] = Header(
-        None, alias="X-Actor", description="Identidad (email/nombre) del operador que ejecuta la acción"
-    ),
-) -> str:
-    expected = os.getenv("WPREPRO_ADMIN_KEY", "")
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="Aprobación deshabilitada: WPREPRO_ADMIN_KEY no está configurada en el servidor.",
-        )
-    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected):
-        raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente.")
-    actor = (x_actor or "").strip()
-    if not actor:
-        raise HTTPException(
-            status_code=400,
-            detail="Falta el header X-Actor (identidad del operador que aprueba/rechaza).",
-        )
-    return actor
 
 
 @app.get("/projects/{project_id}/full-report", tags=["M9 Projects"])
@@ -1113,9 +1120,10 @@ async def get_project_full_report(
 
 
 @app.delete("/projects/{project_id}", tags=["M9 Projects"])
-def delete_project(project_id: str):
+def delete_project(project_id: str, _actor: str = Depends(require_admin)):
     """
     Permanently delete a project record (removes its JSON file from disk).
+    Requires admin auth (X-Admin-Key + X-Actor).
     """
     record = ProjectStore.get(project_id)
     if not record:
