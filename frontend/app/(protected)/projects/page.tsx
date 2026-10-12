@@ -9,6 +9,9 @@ import {
 import { api } from '@/lib/api'
 
 const API_BASE = 'https://wprecovers.onrender.com'
+// Las rutas /projects/* van por el proxy server-side de Next (app/api/projects),
+// que inyecta X-Admin-Key y X-Actor; la key de admin nunca llega al navegador.
+const PROXY_BASE = '/api'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,7 +66,7 @@ const PLAN_LABELS: Record<PlanId, string> = {
 // API helpers
 // ---------------------------------------------------------------------------
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${PROXY_BASE}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   })
@@ -567,15 +570,8 @@ function ProjectDetailModal({
     setReportLoading(true)
     setReportError(null)
     try {
-      // Reuse the already-revealed key if available; otherwise fetch it on demand.
-      let apiKey = revealedKey
-      if (!apiKey) {
-        const data = await api.getProjectApiKey(project.id)
-        apiKey = data.wprepro_api_key
-      }
-      const res = await fetch(`${API_BASE}/projects/${project.id}/full-report`, {
-        headers: { 'X-API-Key': apiKey },
-      })
+      // El proxy inyecta la auth de admin; ya no hace falta la key de WPRepro.
+      const res = await fetch(`${PROXY_BASE}/projects/${project.id}/full-report`)
       if (!res.ok) {
         let detail = `HTTP ${res.status}`
         try {

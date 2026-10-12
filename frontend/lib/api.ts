@@ -542,29 +542,31 @@ export const api = {
     ),
 
   // M9 — Projects
+  // Todas pasan por el proxy server-side de Next (localFetch → app/api/projects)
+  // que inyecta X-Admin-Key y X-Actor; el navegador nunca ve la key de admin.
   listProjects: () =>
-    apiFetch<{ projects: ProjectSummary[] }>('/projects/'),
+    localFetch<{ projects: ProjectSummary[] }>('/api/projects'),
 
   getProject: (projectId: string) =>
-    apiFetch<ProjectDetail>(`/projects/${projectId}`),
+    localFetch<ProjectDetail>(`/api/projects/${projectId}`),
 
   createProject: (req: { client_name: string; site_url: string; plan: string; notas?: string | null }) =>
-    apiFetch<ProjectDetail>('/projects/', {
+    localFetch<ProjectDetail>('/api/projects', {
       method: 'POST',
       body: JSON.stringify(req),
     }),
 
   captureBaseline: (projectId: string) =>
-    apiFetch<ProjectDetail>(`/projects/${projectId}/audit-and-baseline`, { method: 'POST' }),
+    localFetch<ProjectDetail>(`/api/projects/${projectId}/audit-and-baseline`, { method: 'POST' }),
 
   closeProject: (projectId: string) =>
-    apiFetch<CloseProjectResult>(`/projects/${projectId}/close`, { method: 'POST' }),
+    localFetch<CloseProjectResult>(`/api/projects/${projectId}/close`, { method: 'POST' }),
 
   deleteProject: (projectId: string) =>
-    apiFetch<{ id: string; status: string }>(`/projects/${projectId}`, { method: 'DELETE' }),
+    localFetch<{ id: string; status: string }>(`/api/projects/${projectId}`, { method: 'DELETE' }),
 
   getProjectApiKey: (projectId: string) =>
-    apiFetch<{ project_id: string; wprepro_api_key: string }>(`/projects/${projectId}/wprepro-key`),
+    localFetch<{ project_id: string; wprepro_api_key: string }>(`/api/projects/${projectId}/wprepro-key`),
 
   // M10 — Marketing OS
   generateMarketingPlan: (req: MarketingGenerateRequest) =>
