@@ -8,7 +8,6 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
-const API_BASE = 'https://wprecovers.onrender.com'
 // Las rutas /projects/* van por el proxy server-side de Next (app/api/projects),
 // que inyecta X-Admin-Key y X-Actor; la key de admin nunca llega al navegador.
 const PROXY_BASE = '/api'
@@ -562,16 +561,12 @@ function ProjectDetailModal({
     }
   }
 
-  const downloadPdf = () => {
-    window.open(`${API_BASE}/report/download/${project.id}`, '_blank')
-  }
-
-  const downloadFullReport = async () => {
+  // El proxy inyecta la auth de admin; el navegador nunca llama al backend directo.
+  const downloadProxiedPdf = async (path: string, filename: string, fallbackError: string) => {
     setReportLoading(true)
     setReportError(null)
     try {
-      // El proxy inyecta la auth de admin; ya no hace falta la key de WPRepro.
-      const res = await fetch(`${PROXY_BASE}/projects/${project.id}/full-report`)
+      const res = await fetch(`${PROXY_BASE}/projects/${project.id}/${path}`)
       if (!res.ok) {
         let detail = `HTTP ${res.status}`
         try {
@@ -586,17 +581,23 @@ function ProjectDetailModal({
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `reporte-${project.id}.pdf`
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
     } catch (e: unknown) {
-      setReportError(e instanceof Error ? e.message : 'Error al generar el reporte')
+      setReportError(e instanceof Error ? e.message : fallbackError)
     } finally {
       setReportLoading(false)
     }
   }
+
+  const downloadPdf = () =>
+    downloadProxiedPdf('report-pdf', `cierre-${project.id}.pdf`, 'Error al descargar el PDF')
+
+  const downloadFullReport = () =>
+    downloadProxiedPdf('full-report', `reporte-${project.id}.pdf`, 'Error al generar el reporte')
 
   return (
     <ModalShell title={project.client_name} onClose={onClose}>
@@ -699,7 +700,7 @@ function ProjectDetailModal({
             </button>
           )}
           {project.status === 'CLOSED' && (
-            <button className="btn-primary flex items-center gap-2" onClick={downloadPdf}>
+            <button className="btn-primary flex items-center gap-2" onClick={downloadPdf} disabled={reportLoading}>
               <Download className="w-3.5 h-3.5" /> Descargar PDF
             </button>
           )}
