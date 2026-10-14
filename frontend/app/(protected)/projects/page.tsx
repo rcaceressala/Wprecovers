@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { api, localFetch } from '@/lib/api'
 
-const API_BASE = 'https://wprecovers.onrender.com'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'https://wprecovers-v2.onrender.com'
 
 // ---------------------------------------------------------------------------
 // Types
