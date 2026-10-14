@@ -98,7 +98,7 @@ export function Sidebar() {
           Cerrar sesión
         </button>
         <p className="text-[10px] text-muted font-mono px-3">
-          API: {process.env.NEXT_PUBLIC_API_URL ?? 'https://wprecovers.onrender.com'}
+          API: {process.env.NEXT_PUBLIC_API_URL ?? 'https://wprecovers-v2.onrender.com'}
         </p>
       </div>
     </div>
