@@ -81,9 +81,16 @@ app = FastAPI(
     version="2.0.0",
 )
 
+# R-03: solo el frontend de Vercel (y next dev local) puede leer respuestas
+# desde el navegador. No es control de acceso — eso lo hace require_admin.
+CORS_ORIGINS = [
+    "https://wprecovers-frontend.vercel.app",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1085,10 +1092,13 @@ def delete_project(project_id: str, _actor: str = Depends(require_admin)):
 
 # ---------------------------------------------------------------------------
 # M10 — Marketing OS
+#
+# Todas las rutas /marketing/* exigen auth de operador (X-Admin-Key + X-Actor):
+# exponen planes de clientes y disparan llamadas a Claude con costo.
 # ---------------------------------------------------------------------------
 
 @app.post("/marketing/generate", tags=["M10 Marketing OS"])
-async def marketing_generate(req: MarketingGenerateRequest):
+async def marketing_generate(req: MarketingGenerateRequest, _actor: str = Depends(require_admin)):
     """
     Generate a complete 9-module marketing plan for a client, personalized
     with a live M1 audit of their site (Recovery Score, PageSpeed, failed
@@ -1106,7 +1116,7 @@ async def marketing_generate(req: MarketingGenerateRequest):
 
 
 @app.get("/marketing/{plan_id}", tags=["M10 Marketing OS"])
-def get_marketing_plan(plan_id: str):
+def get_marketing_plan(plan_id: str, _actor: str = Depends(require_admin)):
     record = MarketingPlanStore.load(plan_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No marketing plan found with id '{plan_id}'")
@@ -1114,12 +1124,12 @@ def get_marketing_plan(plan_id: str):
 
 
 @app.get("/marketing/", tags=["M10 Marketing OS"])
-def list_marketing_plans(project_id: Optional[str] = None):
+def list_marketing_plans(project_id: Optional[str] = None, _actor: str = Depends(require_admin)):
     return {"plans": MarketingPlanStore.list_all(project_id)}
 
 
 @app.post("/marketing/{plan_id}/execute-content", status_code=202, tags=["M10 Marketing OS"])
-async def marketing_execute_content(plan_id: str):
+async def marketing_execute_content(plan_id: str, _actor: str = Depends(require_admin)):
     """
     Lanza el Módulo 3 (Calendario de Contenido) de un plan ya generado:
     produce el texto completo, prompt de imagen, hashtags y mejor horario
@@ -1138,7 +1148,7 @@ async def marketing_execute_content(plan_id: str):
 
 
 @app.get("/marketing/{plan_id}/content", tags=["M10 Marketing OS"])
-def get_marketing_content(plan_id: str):
+def get_marketing_content(plan_id: str, _actor: str = Depends(require_admin)):
     """Consulta el estado/resultado del job de contenido lanzado por execute-content."""
     record = ContentPieceStore.load(plan_id)
     if not record:
@@ -1147,7 +1157,7 @@ def get_marketing_content(plan_id: str):
 
 
 @app.post("/marketing/{plan_id}/execute-actions", status_code=202, tags=["M10 Marketing OS"])
-async def marketing_execute_actions(plan_id: str):
+async def marketing_execute_actions(plan_id: str, _actor: str = Depends(require_admin)):
     """
     Lanza el Módulo 9 (Top 10 Acciones Inmediatas) de un plan ya generado:
     convierte cada acción en un ticket real (categoría Marketing).
@@ -1164,7 +1174,7 @@ async def marketing_execute_actions(plan_id: str):
 
 
 @app.get("/marketing/{plan_id}/actions", tags=["M10 Marketing OS"])
-def get_marketing_actions(plan_id: str):
+def get_marketing_actions(plan_id: str, _actor: str = Depends(require_admin)):
     """Consulta el estado/resultado del job de tickets lanzado por execute-actions."""
     record = MarketingActionTicketsStore.load(plan_id)
     if not record:
@@ -1173,7 +1183,7 @@ def get_marketing_actions(plan_id: str):
 
 
 @app.post("/marketing/{plan_id}/execute-plan90", status_code=202, tags=["M10 Marketing OS"])
-async def marketing_execute_plan90(plan_id: str):
+async def marketing_execute_plan90(plan_id: str, _actor: str = Depends(require_admin)):
     """
     Lanza el Módulo 6 (Plan de Ejecución 90 días) de un plan ya generado:
     convierte cada acción de las 4 fases (semana 1-2, semana 3-4, mes 2, mes 3)
@@ -1192,7 +1202,7 @@ async def marketing_execute_plan90(plan_id: str):
 
 
 @app.get("/marketing/{plan_id}/plan90", tags=["M10 Marketing OS"])
-def get_marketing_plan90(plan_id: str):
+def get_marketing_plan90(plan_id: str, _actor: str = Depends(require_admin)):
     """Consulta el estado/resultado del job de tickets lanzado por execute-plan90."""
     record = Plan90DiasTicketsStore.load(plan_id)
     if not record:
@@ -1201,7 +1211,7 @@ def get_marketing_plan90(plan_id: str):
 
 
 @app.post("/marketing/{plan_id}/execute-whatsapp", status_code=202, tags=["M10 Marketing OS"])
-async def marketing_execute_whatsapp(plan_id: str):
+async def marketing_execute_whatsapp(plan_id: str, _actor: str = Depends(require_admin)):
     """
     Lanza el Módulo 5 (Estrategia WhatsApp) de un plan ya generado:
     produce el texto real de cada mensaje (bienvenida, seguimiento,
@@ -1221,7 +1231,7 @@ async def marketing_execute_whatsapp(plan_id: str):
 
 
 @app.get("/marketing/{plan_id}/whatsapp", tags=["M10 Marketing OS"])
-def get_marketing_whatsapp(plan_id: str):
+def get_marketing_whatsapp(plan_id: str, _actor: str = Depends(require_admin)):
     """Consulta el estado/resultado del job de mensajes lanzado por execute-whatsapp."""
     record = WhatsAppMessageStore.load(plan_id)
     if not record:
@@ -1230,7 +1240,7 @@ def get_marketing_whatsapp(plan_id: str):
 
 
 @app.post("/marketing/{plan_id}/execute-iaautomatizacion", status_code=202, tags=["M10 Marketing OS"])
-async def marketing_execute_iaautomatizacion(plan_id: str):
+async def marketing_execute_iaautomatizacion(plan_id: str, _actor: str = Depends(require_admin)):
     """
     Lanza el Módulo 7 (IA y Automatización) de un plan ya generado: convierte
     cada recomendación en prosa de ia_automatizacion en una ficha ejecutable
@@ -1250,7 +1260,7 @@ async def marketing_execute_iaautomatizacion(plan_id: str):
 
 
 @app.get("/marketing/{plan_id}/iaautomatizacion", tags=["M10 Marketing OS"])
-def get_marketing_iaautomatizacion(plan_id: str):
+def get_marketing_iaautomatizacion(plan_id: str, _actor: str = Depends(require_admin)):
     """Consulta el estado/resultado del job de fichas lanzado por execute-iaautomatizacion."""
     record = IaAutomatizacionStore.load(plan_id)
     if not record:
@@ -1259,7 +1269,7 @@ def get_marketing_iaautomatizacion(plan_id: str):
 
 
 @app.post("/marketing/{plan_id}/execute-metricasclave", status_code=202, tags=["M10 Marketing OS"])
-async def marketing_execute_metricasclave(plan_id: str):
+async def marketing_execute_metricasclave(plan_id: str, _actor: str = Depends(require_admin)):
     """
     Lanza el Módulo 8 (Métricas Clave) de un plan ya generado: convierte cada
     métrica en prosa de metricas_clave en una ficha estructurada (nombre, fórmula,
@@ -1279,7 +1289,7 @@ async def marketing_execute_metricasclave(plan_id: str):
 
 
 @app.get("/marketing/{plan_id}/metricasclave", tags=["M10 Marketing OS"])
-def get_marketing_metricasclave(plan_id: str):
+def get_marketing_metricasclave(plan_id: str, _actor: str = Depends(require_admin)):
     """Consulta el estado/resultado del job de métricas lanzado por execute-metricasclave."""
     record = MetricasClaveStore.load(plan_id)
     if not record:
@@ -1288,10 +1298,11 @@ def get_marketing_metricasclave(plan_id: str):
 
 
 @app.get("/marketing/download/{plan_id}", tags=["M10 Marketing OS"])
-def download_marketing_pdf(plan_id: str):
+def download_marketing_pdf(plan_id: str, _actor: str = Depends(require_admin)):
     """
     Download the PDF for a marketing plan.
     Returns 404 if the PDF was not generated (reportlab not installed).
+    Requires admin auth (X-Admin-Key + X-Actor).
     """
     record = MarketingPlanStore.load(plan_id)
     if not record:
