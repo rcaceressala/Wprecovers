@@ -554,22 +554,24 @@ export const api = {
     apiFetch<{ project_id: string; wprepro_api_key: string }>(`/projects/${projectId}/wprepro-key`),
 
   // M10 — Marketing OS
+  // Todas pasan por el proxy server-side de Next (localFetch), que inyecta
+  // X-Admin-Key y X-Actor — ver app/api/marketing/**/route.ts.
   generateMarketingPlan: (req: MarketingGenerateRequest) =>
-    apiFetch<MarketingPlanRecord>('/marketing/generate', {
+    localFetch<MarketingPlanRecord>('/api/marketing/generate', {
       method: 'POST',
       body: JSON.stringify(req),
     }),
 
   getMarketingPlan: (planId: string) =>
-    apiFetch<MarketingPlanRecord>(`/marketing/${planId}`),
+    localFetch<MarketingPlanRecord>(`/api/marketing/${planId}`),
 
   listMarketingPlans: (projectId?: string) =>
-    apiFetch<{ plans: MarketingPlanSummary[] }>(
-      projectId ? `/marketing/?project_id=${encodeURIComponent(projectId)}` : '/marketing/'
+    localFetch<{ plans: MarketingPlanSummary[] }>(
+      projectId ? `/api/marketing?project_id=${encodeURIComponent(projectId)}` : '/api/marketing'
     ),
 
   downloadMarketingPDF: async (planId: string): Promise<Blob> => {
-    const res = await fetch(`${BASE}/marketing/download/${planId}`)
+    const res = await fetch(`/api/marketing/download/${planId}`)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`)
@@ -578,29 +580,29 @@ export const api = {
   },
 
   executeMarketingContent: (planId: string) =>
-    apiFetch<ContentPiecesRecord>(`/marketing/${planId}/execute-content`, { method: 'POST' }),
+    localFetch<ContentPiecesRecord>(`/api/marketing/${planId}/execute-content`, { method: 'POST' }),
   getMarketingContent: (planId: string) =>
-    apiFetch<ContentPiecesRecord>(`/marketing/${planId}/content`),
+    localFetch<ContentPiecesRecord>(`/api/marketing/${planId}/content`),
   executeMarketingActions: (planId: string) =>
-    apiFetch<MarketingActionTicketsRecord>(`/marketing/${planId}/execute-actions`, { method: 'POST' }),
+    localFetch<MarketingActionTicketsRecord>(`/api/marketing/${planId}/execute-actions`, { method: 'POST' }),
   getMarketingActions: (planId: string) =>
-    apiFetch<MarketingActionTicketsRecord>(`/marketing/${planId}/actions`),
+    localFetch<MarketingActionTicketsRecord>(`/api/marketing/${planId}/actions`),
   executeMarketingWhatsapp: (planId: string) =>
-    apiFetch<WhatsAppMessagesRecord>(`/marketing/${planId}/execute-whatsapp`, { method: 'POST' }),
+    localFetch<WhatsAppMessagesRecord>(`/api/marketing/${planId}/execute-whatsapp`, { method: 'POST' }),
   getMarketingWhatsapp: (planId: string) =>
-    apiFetch<WhatsAppMessagesRecord>(`/marketing/${planId}/whatsapp`),
+    localFetch<WhatsAppMessagesRecord>(`/api/marketing/${planId}/whatsapp`),
   executeMarketingPlan90: (planId: string) =>
-    apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/execute-plan90`, { method: 'POST' }),
+    localFetch<Plan90DiasTicketsRecord>(`/api/marketing/${planId}/execute-plan90`, { method: 'POST' }),
   getMarketingPlan90: (planId: string) =>
-    apiFetch<Plan90DiasTicketsRecord>(`/marketing/${planId}/plan90`),
+    localFetch<Plan90DiasTicketsRecord>(`/api/marketing/${planId}/plan90`),
   executeMarketingIaAutomatizacion: (planId: string) =>
-    apiFetch<IaAutomatizacionRecord>(`/marketing/${planId}/execute-iaautomatizacion`, { method: 'POST' }),
+    localFetch<IaAutomatizacionRecord>(`/api/marketing/${planId}/execute-iaautomatizacion`, { method: 'POST' }),
   getMarketingIaAutomatizacion: (planId: string) =>
-    apiFetch<IaAutomatizacionRecord>(`/marketing/${planId}/iaautomatizacion`),
+    localFetch<IaAutomatizacionRecord>(`/api/marketing/${planId}/iaautomatizacion`),
   executeMarketingMetricas: (planId: string) =>
-    apiFetch<MetricasClaveRecord>(`/marketing/${planId}/execute-metricasclave`, { method: 'POST' }),
+    localFetch<MetricasClaveRecord>(`/api/marketing/${planId}/execute-metricasclave`, { method: 'POST' }),
   getMarketingMetricas: (planId: string) =>
-    apiFetch<MetricasClaveRecord>(`/marketing/${planId}/metricasclave`),
+    localFetch<MetricasClaveRecord>(`/api/marketing/${planId}/metricasclave`),
 }
 
 // ---------------------------------------------------------------------------

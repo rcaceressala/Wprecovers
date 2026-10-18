@@ -2,8 +2,8 @@ import { cookies } from 'next/headers'
 import { jwtVerify } from 'jose'
 import { NextResponse } from 'next/server'
 
-// Proxy server-side para los endpoints de /projects que ahora requieren auth
-// de operador en el backend (hotfix de seguridad: create/list/get/audit-and-
+// Proxy server-side para los endpoints de /projects y /marketing que requieren
+// auth de operador en el backend (hotfix de seguridad: create/list/get/audit-and-
 // baseline/close/delete quedaron sin protección hasta hoy). Mantiene la
 // X-Admin-Key fuera del navegador: la key vive solo en el servidor
 // (WPREPRO_ADMIN_KEY) y la identidad del operador (X-Actor) se deriva del JWT
@@ -15,10 +15,17 @@ const COOKIE_NAME = 'wpr_token'
 
 type ProxyMethod = 'GET' | 'POST' | 'DELETE'
 
+// Rechaza ids que, al armar la URL del backend, podrían salirse de la ruta
+// prevista (p. ej. "..") y llevar la X-Admin-Key a otro endpoint.
+export function isSafeId(id: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(id)
+}
+
 export async function proxyProjectRequest(
   method: ProxyMethod,
   path: string,
   body?: unknown,
+  opts?: { raw?: boolean },
 ): Promise<NextResponse> {
   const secret = process.env.JWT_SECRET
   const adminKey = process.env.WPREPRO_ADMIN_KEY
@@ -53,15 +60,31 @@ export async function proxyProjectRequest(
     return NextResponse.json({ detail: 'El token de sesión no incluye la identidad del operador.' }, { status: 401 })
   }
 
-  const upstream = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Admin-Key': adminKey,
-      'X-Actor': actor,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+  let upstream: Response
+  try {
+    upstream = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Key': adminKey,
+        'X-Actor': actor,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    return NextResponse.json({ detail: 'El backend no respondió a tiempo.' }, { status: 502 })
+  }
+
+  // Binarios (PDF): se reenvía el cuerpo tal cual, con su Content-Type y
+  // Content-Disposition; los errores JSON del backend pasan igual.
+  if (opts?.raw) {
+    const headers = new Headers()
+    for (const h of ['Content-Type', 'Content-Disposition']) {
+      const v = upstream.headers.get(h)
+      if (v) headers.set(h, v)
+    }
+    return new NextResponse(upstream.body, { status: upstream.status, headers })
+  }
 
   const data = await upstream.json().catch(() => ({}))
   return NextResponse.json(data, { status: upstream.status })
